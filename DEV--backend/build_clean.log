@@ -1,0 +1,128 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] --------------------< com.developerev:developerev >---------------------
+[INFO] Building developerev 0.0.1-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- clean:3.2.0:clean (default-clean) @ developerev ---
+[INFO] Deleting D:\DeveloperEV\Dev-Backend\backend\target
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ developerev ---
+[WARNING] Using platform encoding (UTF-8 actually) to copy filtered resources, i.e. build is platform dependent!
+[INFO] Copying 1 resource from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.13.0:compile (default-compile) @ developerev ---
+[INFO] Recompiling the module because of changed source code.
+[WARNING] File encoding has not been set, using platform encoding UTF-8, i.e. build is platform dependent!
+[INFO] Compiling 14 source files with javac [debug target 1.8] to target\classes
+[INFO] -------------------------------------------------------------
+[WARNING] COMPILATION WARNING : 
+[INFO] -------------------------------------------------------------
+[WARNING] bootstrap class path is not set in conjunction with -source 8
+  not setting the bootstrap class path may lead to class files that cannot run on JDK 8
+    --release 8 is recommended instead of -source 8 -target 1.8 because it sets the bootstrap class path automatically
+[WARNING] source value 8 is obsolete and will be removed in a future release
+[WARNING] target value 8 is obsolete and will be removed in a future release
+[WARNING] To suppress warnings about obsolete options, use -Xlint:-options.
+[INFO] 4 warnings 
+[INFO] -------------------------------------------------------------
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR : 
+[INFO] -------------------------------------------------------------
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/security/CustomUserDetailsService.java:[28,21] cannot find symbol
+  symbol:   method getUsername()
+  location: variable user of type com.developerev.entity.User
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/security/CustomUserDetailsService.java:[29,21] cannot find symbol
+  symbol:   method getPassword()
+  location: variable user of type com.developerev.entity.User
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/security/CustomUserDetailsService.java:[30,84] cannot find symbol
+  symbol:   method getRole()
+  location: variable user of type com.developerev.entity.User
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[32,50] cannot find symbol
+  symbol:   method getUsername()
+  location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[35,47] cannot find symbol
+  symbol:   method getEmail()
+  location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[40,33] cannot find symbol
+  symbol:   method getUsername()
+  location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[41,30] cannot find symbol
+  symbol:   method getEmail()
+  location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[42,56] cannot find symbol
+  symbol:   method getPassword()
+  location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[43,13] cannot find symbol
+  symbol:   method setRole(com.developerev.entity.Role)
+  location: variable user of type com.developerev.entity.User
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[50,64] cannot find symbol
+  symbol:   method getUsername()
+  location: variable request of type com.developerev.dto.AuthRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[50,87] cannot find symbol
+  symbol:   method getPassword()
+  location: variable request of type com.developerev.dto.AuthRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[52,53] cannot find symbol
+  symbol:   method getUsername()
+  location: variable request of type com.developerev.dto.AuthRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[53,16] constructor AuthResponse in class com.developerev.dto.AuthResponse cannot be applied to given types;
+  required: no arguments
+  found:    java.lang.String
+  reason: actual and formal argument lists differ in length
+[INFO] 13 errors 
+[INFO] -------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  3.780 s
+[INFO] Finished at: 2026-02-23T10:14:50+05:30
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project developerev: Compilation failure: Compilation failure: 
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/security/CustomUserDetailsService.java:[28,21] cannot find symbol
+[ERROR]   symbol:   method getUsername()
+[ERROR]   location: variable user of type com.developerev.entity.User
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/security/CustomUserDetailsService.java:[29,21] cannot find symbol
+[ERROR]   symbol:   method getPassword()
+[ERROR]   location: variable user of type com.developerev.entity.User
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/security/CustomUserDetailsService.java:[30,84] cannot find symbol
+[ERROR]   symbol:   method getRole()
+[ERROR]   location: variable user of type com.developerev.entity.User
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[32,50] cannot find symbol
+[ERROR]   symbol:   method getUsername()
+[ERROR]   location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[35,47] cannot find symbol
+[ERROR]   symbol:   method getEmail()
+[ERROR]   location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[40,33] cannot find symbol
+[ERROR]   symbol:   method getUsername()
+[ERROR]   location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[41,30] cannot find symbol
+[ERROR]   symbol:   method getEmail()
+[ERROR]   location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[42,56] cannot find symbol
+[ERROR]   symbol:   method getPassword()
+[ERROR]   location: variable request of type com.developerev.dto.RegisterRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[43,13] cannot find symbol
+[ERROR]   symbol:   method setRole(com.developerev.entity.Role)
+[ERROR]   location: variable user of type com.developerev.entity.User
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[50,64] cannot find symbol
+[ERROR]   symbol:   method getUsername()
+[ERROR]   location: variable request of type com.developerev.dto.AuthRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[50,87] cannot find symbol
+[ERROR]   symbol:   method getPassword()
+[ERROR]   location: variable request of type com.developerev.dto.AuthRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[52,53] cannot find symbol
+[ERROR]   symbol:   method getUsername()
+[ERROR]   location: variable request of type com.developerev.dto.AuthRequest
+[ERROR] /D:/DeveloperEV/Dev-Backend/backend/src/main/java/com/developerev/service/AuthService.java:[53,16] constructor AuthResponse in class com.developerev.dto.AuthResponse cannot be applied to given types;
+[ERROR]   required: no arguments
+[ERROR]   found:    java.lang.String
+[ERROR]   reason: actual and formal argument lists differ in length
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
