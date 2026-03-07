@@ -7,6 +7,9 @@ import com.developerev.ai.exception.TokenLimitExceededException;
 import com.developerev.ai.exception.UnsupportedProviderException;
 import com.developerev.ai.prompt.PromptType;
 import com.developerev.ai.service.AIService;
+import com.developerev.dto.ProjectPlanRequestDto;
+import com.developerev.dto.ProjectPlanResponseDto;
+import com.developerev.service.AntiGravityService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -22,6 +25,7 @@ import java.time.LocalDateTime;
 public class AIController {
 
     private final AIService aiService;
+    private final AntiGravityService antiGravityService;
 
     @PostMapping("/review")
     public ResponseEntity<CodeReviewResponse> submitCodeReview(
@@ -65,6 +69,17 @@ public class AIController {
             return buildErrorResponse("An internal server error occurred.", providerName,
                     HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    @PostMapping("/project-plan")
+    public ResponseEntity<?> generatePlan(@RequestBody ProjectPlanRequestDto request) {
+
+        Long projectId = request.getProjectId();
+        String featureDescription = request.getFeatureDescription();
+
+        ProjectPlanResponseDto response = antiGravityService.generateProjectPlan(projectId, featureDescription);
+
+        return ResponseEntity.ok(response);
     }
 
     private ResponseEntity<CodeReviewResponse> buildErrorResponse(String errorMessage, String providerName,
