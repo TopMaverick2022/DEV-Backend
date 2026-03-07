@@ -62,7 +62,36 @@ public class AntiGravityService {
           .replace("```", "")
           .trim();
 
-      return objectMapper.readValue(cleanedResponse, ProjectPlanResponseDto.class);
+      ProjectPlanResponseDto responseDto = objectMapper.readValue(cleanedResponse, ProjectPlanResponseDto.class);
+
+      // Save Feature to database
+      com.developerev.model.Feature feature = new com.developerev.model.Feature();
+      feature.setProjectId(projectId);
+      feature.setName(responseDto.getFeatureName());
+      feature.setDescription(featureDescription);
+      feature.setComplexity(responseDto.getComplexity());
+      feature.setTotalEstimatedHours(responseDto.getTotalEstimatedHours());
+
+      feature = featureRepository.save(feature);
+
+      // Save related Tasks
+      if (responseDto.getTasks() != null) {
+        for (ProjectPlanResponseDto.TaskDto taskDto : responseDto.getTasks()) {
+          com.developerev.model.Task task = new com.developerev.model.Task();
+          task.setProjectId(projectId);
+          task.setFeatureId(feature.getId());
+          task.setTitle(taskDto.getTitle());
+          task.setDescription(taskDto.getDescription());
+          task.setType(taskDto.getType());
+          task.setEstimatedHours(taskDto.getEstimatedHours());
+          task.setPriority(taskDto.getPriority());
+          task.setStatus("TODO");
+
+          taskRepository.save(task);
+        }
+      }
+
+      return responseDto;
     } catch (Exception e) {
       log.error("Failed to parse Gemini response", e);
       throw new RuntimeException("Error parsing AI response: " + e.getMessage(), e);
