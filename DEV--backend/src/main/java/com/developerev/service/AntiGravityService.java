@@ -1,15 +1,19 @@
 package com.developerev.service;
 
+import com.developerev.dto.ArchitectureResponseDto;
+import com.developerev.dto.CriticalPathResponseDto;
 import com.developerev.dto.DependencyAiResponseDto;
 import com.developerev.dto.ProjectPlanResponseDto;
 import com.developerev.dto.SprintAiResponseDto;
 import com.developerev.dto.SprintDetailDto;
 import com.developerev.dto.TaskDependencyDto;
+import com.developerev.model.ArchitecturePlan;
 import com.developerev.model.Feature;
 import com.developerev.model.Sprint;
 import com.developerev.model.Task;
 import com.developerev.model.TaskDependency;
 import com.developerev.model.TaskStatus;
+import com.developerev.repository.ArchitecturePlanRepository;
 import com.developerev.repository.FeatureRepository;
 import com.developerev.repository.SprintRepository;
 import com.developerev.repository.TaskDependencyRepository;
@@ -34,6 +38,7 @@ public class AntiGravityService {
   private final TaskRepository taskRepository;
   private final SprintRepository sprintRepository;
   private final TaskDependencyRepository taskDependencyRepository;
+  private final ArchitecturePlanRepository architecturePlanRepository;
   private final ObjectMapper objectMapper;
 
   public ProjectPlanResponseDto generateProjectPlan(Long projectId, String featureDescription) {
@@ -366,6 +371,185 @@ public class AntiGravityService {
     } catch (Exception e) {
       log.error("Failed to parse Gemini dependency response", e);
       throw new RuntimeException("Error detecting dependencies: " + e.getMessage(), e);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Critical Path Engine
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  public CriticalPathResponseDto computeCriticalPath(Long featureId) {
+
+    // 1. Load tasks
+    List<Task> tasks = taskRepository.findByFeatureId(featureId);
+    if (tasks.isEmpty()) {
+      throw new RuntimeException("No tasks found for feature id: " + featureId);
+    }
+
+    Map<Long, Task> taskMap = new java.util.HashMap<>();
+    for (Task t : tasks)
+      taskMap.put(t.getId(), t);
+
+    // 2. Load saved dependencies
+    List<com.developerev.model.TaskDependency> deps = taskDependencyRepository.findByDependentTask_FeatureId(featureId);
+
+    // 3. Build adjacency list: prerequisite → list of dependents
+    // and in-degree map for Kahn's topological sort
+    Map<Long, List<Long>> dependents = new java.util.HashMap<>();
+    Map<Long, Integer> inDegree = new java.util.HashMap<>();
+    for (Task t : tasks) {
+      dependents.put(t.getId(), new ArrayList<>());
+      inDegree.put(t.getId(), 0);
+    }
+    for (com.developerev.model.TaskDependency dep : deps) {
+      Long prereqId = dep.getPrerequisiteTask().getId();
+      Long depId = dep.getDependentTask().getId();
+      dependents.get(prereqId).add(depId);
+      inDegree.merge(depId, 1, (a, b) -> a + b);
+    }
+
+    // 4. Kahn's algorithm — track earliest finish time (EFT) and parent per task
+    // EFT(task) = max(EFT of all prerequisites) + task.estimatedHours
+    Map<Long, Integer> eft = new java.util.HashMap<>();
+    Map<Long, Long> parent = new java.util.HashMap<>();
+    java.util.Queue<Long> queue = new java.util.LinkedList<>();
+
+    for (Task t : tasks) {
+      int hours = t.getEstimatedHours() != null ? t.getEstimatedHours() : 0;
+      eft.put(t.getId(), hours); // initial EFT = own hours (no prereq yet)
+      parent.put(t.getId(), null);
+      if (inDegree.get(t.getId()) == 0)
+        queue.add(t.getId());
+    }
+
+    while (!queue.isEmpty()) {
+      Long curr = queue.poll();
+      for (Long nextId : dependents.get(curr)) {
+        int candidate = eft.get(curr) +
+            (taskMap.get(nextId).getEstimatedHours() != null
+                ? taskMap.get(nextId).getEstimatedHours()
+                : 0);
+        if (candidate > eft.get(nextId)) {
+          eft.put(nextId, candidate);
+          parent.put(nextId, curr);
+        }
+        inDegree.merge(nextId, -1, (a, b) -> a + b);
+        if (inDegree.get(nextId) == 0)
+          queue.add(nextId);
+      }
+    }
+
+    // 5. Find the task with the highest EFT — that is the end of the critical path
+    Long endTaskId = tasks.stream()
+        .map(Task::getId)
+        .max(java.util.Comparator.comparingInt(eft::get))
+        .orElseThrow();
+    int criticalPathHours = eft.get(endTaskId);
+
+    // 6. Walk parent pointers back to reconstruct the path, then reverse it
+    java.util.Deque<String> path = new java.util.ArrayDeque<>();
+    Long cur = endTaskId;
+    while (cur != null) {
+      path.addFirst(taskMap.get(cur).getTitle());
+      cur = parent.get(cur);
+    }
+
+    log.info("Critical path for feature {}: {} hours, {} tasks",
+        featureId, criticalPathHours, path.size());
+
+    return new CriticalPathResponseDto(criticalPathHours, new ArrayList<>(path));
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AI Architecture Generator
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  public ArchitectureResponseDto generateArchitecture(String projectIdea) {
+
+    // 1. Build the Gemini prompt
+    String prompt = """
+        You are a senior software architect.
+
+        Design a scalable system architecture for the following project idea.
+
+        Include:
+        1. Microservices (name, description, database)
+        2. REST APIs (method, endpoint, description)
+        3. Event flows (name, producer, consumer)
+        4. External integrations where applicable
+
+        Return ONLY valid JSON. No markdown. No explanations.
+
+        Response format:
+        {
+          "services": [
+            {
+              "name": "",
+              "description": "",
+              "database": ""
+            }
+          ],
+          "apis": [
+            {
+              "method": "",
+              "endpoint": "",
+              "description": ""
+            }
+          ],
+          "events": [
+            {
+              "name": "",
+              "producer": "",
+              "consumer": ""
+            }
+          ]
+        }
+
+        Project idea: %s
+        """.formatted(projectIdea);
+
+    log.info("Calling Gemini for architecture generation: {}", projectIdea);
+    String geminiResponse = geminiClient.callGemini(prompt);
+
+    try {
+      // 2. Extract text from Gemini response envelope
+      JsonNode root = objectMapper.readTree(geminiResponse);
+      String textContent = root.path("candidates").get(0)
+          .path("content")
+          .path("parts").get(0)
+          .path("text").asText();
+
+      String cleanedResponse = textContent
+          .replace("```json", "")
+          .replace("```", "")
+          .trim();
+
+      log.debug("Gemini architecture response (cleaned): {}", cleanedResponse);
+
+      // 3. Parse AI response into DTO
+      ArchitectureResponseDto responseDto = objectMapper.readValue(cleanedResponse, ArchitectureResponseDto.class);
+
+      // 4. Persist the architecture plan to the database
+      ArchitecturePlan plan = ArchitecturePlan.builder()
+          .projectIdea(projectIdea)
+          .architectureJson(cleanedResponse)
+          .build();
+      plan = architecturePlanRepository.save(plan);
+
+      // 5. Attach the DB ID to the response so callers can reference this plan later
+      responseDto.setPlanId(plan.getId());
+
+      log.info("Architecture plan saved with id={}, services={}, apis={}, events={}",
+          plan.getId(),
+          responseDto.getServices() != null ? responseDto.getServices().size() : 0,
+          responseDto.getApis() != null ? responseDto.getApis().size() : 0,
+          responseDto.getEvents() != null ? responseDto.getEvents().size() : 0);
+
+      return responseDto;
+
+    } catch (Exception e) {
+      log.error("Failed to parse Gemini architecture response", e);
+      throw new RuntimeException("Error generating architecture: " + e.getMessage(), e);
     }
   }
 
