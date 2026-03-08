@@ -1,12 +1,12 @@
 package com.developerev.repository;
 
-import com.developerev.model.Task;
+import com.developerev.model.Sprint;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
 @Repository
-public interface TaskRepository extends JpaRepository<Task, Long> {
-    List<Task> findByFeatureId(Long featureId);
+public interface SprintRepository extends JpaRepository<Sprint, Long> {
+    List<Sprint> findByFeatureId(Long featureId);
 }
