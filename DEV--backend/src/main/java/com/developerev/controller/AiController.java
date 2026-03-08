@@ -1,13 +1,15 @@
 package com.developerev.controller;
 
 import com.developerev.dto.ArchitectureResponseDto;
-import com.developerev.dto.CriticalPathResponseDto;
+import com.developerev.dto.ProjectReviewResponseDto;
 import com.developerev.dto.SprintDetailDto;
 import com.developerev.dto.TaskDependencyDto;
 import com.developerev.service.AntiGravityService;
+import com.developerev.service.CodeReviewService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -18,12 +20,11 @@ import java.util.Map;
 public class AiController {
 
     private final AntiGravityService antiGravityService;
+    private final CodeReviewService codeReviewService;
 
     /**
      * POST /ai/generate-sprints/{featureId}
-     *
      * Pre-condition: feature must have tasks (run /ai/project-plan first).
-     * Returns sprints with assigned tasks.
      */
     @PostMapping("/generate-sprints/{featureId}")
     public ResponseEntity<List<SprintDetailDto>> generateSprints(@PathVariable Long featureId) {
@@ -36,9 +37,7 @@ public class AiController {
 
     /**
      * POST /ai/detect-dependencies/{featureId}
-     *
      * Pre-condition: feature must have tasks (run /ai/project-plan first).
-     * Detects and persists logical task dependencies, returns dependency list.
      */
     @PostMapping("/detect-dependencies/{featureId}")
     public ResponseEntity<List<TaskDependencyDto>> detectDependencies(@PathVariable Long featureId) {
@@ -51,11 +50,7 @@ public class AiController {
 
     /**
      * POST /ai/generate-architecture
-     *
      * Body: { "idea": "Build a payment system" }
-     *
-     * Generates a full system architecture blueprint (services, APIs, events)
-     * and persists it in the database. Returns the structured design plus a planId.
      */
     @PostMapping("/generate-architecture")
     public ResponseEntity<ArchitectureResponseDto> generateArchitecture(
@@ -68,6 +63,30 @@ public class AiController {
             return ResponseEntity.ok(antiGravityService.generateArchitecture(idea));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * POST /ai/code-review
+     *
+     * Accepts a zip file containing a code project.
+     * Extracts supported source files (.java, .js, .ts, .py, .go, .kt, ...),
+     * sends each to Gemini for code review, persists results, and returns a
+     * structured review report.
+     *
+     * Postman: Body → form-data → Key: "project", Type: File
+     */
+    @PostMapping(value = "/code-review", consumes = "multipart/form-data")
+    public ResponseEntity<ProjectReviewResponseDto> reviewCode(
+            @RequestParam("project") MultipartFile zipFile) {
+        if (zipFile.isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+        try {
+            ProjectReviewResponseDto result = codeReviewService.reviewProject(zipFile);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
         }
     }
 }
