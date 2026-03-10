@@ -15,37 +15,48 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
+/**
+ * Orchestrates the full AI code review pipeline:
+ *
+ * ZipExtractorService → extracts ZIP to temp dir
+ * ↓
+ * DirectoryScannerService → lists all source files
+ * ↓
+ * LanguageDetectionService → detects language per file
+ * ↓
+ * FileContentService → reads file content (truncated)
+ * ↓
+ * AiPromptBuilder → builds language-aware prompt
+ * ↓
+ * GeminiClient → calls Gemini AI
+ * ↓
+ * DB persistence → saves project, files, reviews
+ * ↓
+ * ProjectReviewResponseDto → structured JSON response
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class CodeReviewService {
 
+    // ── Pipeline services ──────────────────────────────────────────────────
+    private final ZipExtractorService zipExtractorService;
+    private final DirectoryScannerService directoryScannerService;
+    private final LanguageDetectionService languageDetectionService;
+    private final FileContentService fileContentService;
+    private final AiPromptBuilder aiPromptBuilder;
     private final GeminiClient geminiClient;
+
+    // ── Persistence ────────────────────────────────────────────────────────
     private final CodeProjectRepository codeProjectRepository;
     private final CodeFileRepository codeFileRepository;
     private final CodeReviewRepository codeReviewRepository;
     private final ObjectMapper objectMapper;
-
-    /** File extensions that will be reviewed. */
-    private static final Set<String> SUPPORTED_EXTENSIONS = Set.of(
-            ".java", ".js", ".ts", ".py", ".go", ".kt", ".cs", ".cpp", ".c");
-
-    /** Path segments that should be skipped entirely. */
-    private static final Set<String> IGNORED_DIRECTORIES = Set.of(
-            "node_modules", "target", "build", ".git", ".idea", "__pycache__", "dist");
-
-    /** Max characters sent to AI per file to stay within token limits. */
-    private static final int MAX_FILE_CHARS = 4000;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Public entry point
@@ -53,166 +64,83 @@ public class CodeReviewService {
 
     public ProjectReviewResponseDto reviewProject(MultipartFile zipFile) throws IOException {
 
-        // 1. Persist the project record
-        CodeProject project = CodeProject.builder()
-                .name(zipFile.getOriginalFilename())
-                .build();
-        project = codeProjectRepository.save(project);
+        log.info("ZIP received: {}", zipFile.getOriginalFilename());
+
+        // ── Stage 1: Persist project record ───────────────────────────────
+        CodeProject project = codeProjectRepository.save(
+                CodeProject.builder()
+                        .name(zipFile.getOriginalFilename())
+                        .build());
         log.info("Created CodeProject id={} name={}", project.getId(), project.getName());
+
+        // ── Stage 2: Extract ZIP to temp directory ─────────────────────────
+        Path tempDir = zipExtractorService.extractZip(zipFile);
 
         List<FileReviewDto> fileReviews = new ArrayList<>();
 
-        // 2. Stream through the zip entries
-        try (ZipInputStream zis = new ZipInputStream(zipFile.getInputStream())) {
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
+        try {
+            // ── Stage 3: Scan for all source files ─────────────────────────
+            List<Path> sourceFiles = directoryScannerService.scan(tempDir);
 
-                String entryPath = entry.getName().replace("\\", "/");
+            for (Path file : sourceFiles) {
 
-                // Skip directories and ignored paths
-                if (entry.isDirectory() || isIgnored(entryPath)) {
-                    zis.closeEntry();
+                // ── Stage 4: Detect language ──────────────────────────────
+                String language = languageDetectionService.detectLanguage(file);
+                String filename = file.getFileName().toString();
+
+                // ── Stage 5: Read content ─────────────────────────────────
+                String content = fileContentService.readFile(file);
+                if (content.isBlank())
                     continue;
-                }
 
-                // Skip unsupported file types
-                if (!isSupportedExtension(entryPath)) {
-                    zis.closeEntry();
-                    continue;
-                }
+                // ── Stage 6: Persist file record ──────────────────────────
+                CodeFile codeFile = codeFileRepository.save(
+                        CodeFile.builder()
+                                .projectId(project.getId())
+                                .filename(filename)
+                                .path(tempDir.relativize(file).toString().replace("\\", "/"))
+                                .build());
 
-                String filename = extractFilename(entryPath);
-                log.info("Reviewing file: {}", entryPath);
+                // ── Stage 7: Build prompt + call AI ───────────────────────
+                log.info("Sending file to AI: {} [{}]", filename, language);
+                String prompt = aiPromptBuilder.buildPrompt(filename, language, content);
+                FileReviewDto review = callAiAndParse(filename, language,
+                        tempDir.relativize(file).toString().replace("\\", "/"), prompt);
 
-                // 3. Read file content (without closing the ZipInputStream)
-                String content = readEntry(zis);
-                if (content.isBlank()) {
-                    zis.closeEntry();
-                    continue;
-                }
-
-                // 4. Persist the file record
-                final Long projectId = project.getId();
-                CodeFile codeFile = CodeFile.builder()
-                        .projectId(projectId)
-                        .filename(filename)
-                        .path(entryPath)
-                        .build();
-                codeFile = codeFileRepository.save(codeFile);
-
-                // 5. Call AI for review
-                FileReviewDto review = callAiReview(filename, content, entryPath);
-
-                // 6. Persist the review result
-                final Long fileId = codeFile.getId();
-                CodeReview codeReview = CodeReview.builder()
-                        .fileId(fileId)
-                        .issues(serializeList(review.getIssues()))
-                        .suggestions(serializeList(review.getSuggestions()))
-                        .build();
-                codeReviewRepository.save(codeReview);
+                // ── Stage 8: Persist review result ────────────────────────
+                persistReview(codeFile.getId(), language, review);
 
                 fileReviews.add(review);
-                zis.closeEntry();
             }
+
+        } finally {
+            // ── Stage 9: Always clean up temp directory ────────────────────
+            zipExtractorService.cleanup(tempDir);
         }
 
         log.info("Code review complete: {} files reviewed for project id={}",
                 fileReviews.size(), project.getId());
 
-        return new ProjectReviewResponseDto(
-                project.getId(),
-                project.getName(),
-                fileReviews.size(),
-                fileReviews);
+        return ProjectReviewResponseDto.builder()
+                .projectId(project.getId())
+                .projectName(project.getName())
+                .totalFilesReviewed(fileReviews.size())
+                .fileReviews(fileReviews)
+                .status("DONE")
+                .build();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** Returns true if the entry path contains any ignored directory segment. */
-    private boolean isIgnored(String path) {
-        for (String ignored : IGNORED_DIRECTORIES) {
-            if (path.contains("/" + ignored + "/") || path.startsWith(ignored + "/")) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** Returns true if the file has a supported extension. */
-    private boolean isSupportedExtension(String path) {
-        for (String ext : SUPPORTED_EXTENSIONS) {
-            if (path.endsWith(ext))
-                return true;
-        }
-        return false;
-    }
-
-    /** Extracts just the filename from a full path. */
-    private String extractFilename(String path) {
-        int idx = path.lastIndexOf('/');
-        return idx >= 0 ? path.substring(idx + 1) : path;
-    }
-
     /**
-     * Reads the current ZipEntry's content into a String.
-     * Truncates at MAX_FILE_CHARS to stay within AI token limits.
+     * Calls Gemini and parses the JSON response into a FileReviewDto.
+     * Returns an empty review (not null) on any parse/network failure
+     * so one bad file does not abort the entire project review.
      */
-    private String readEntry(ZipInputStream zis) throws IOException {
-        BufferedReader reader = new BufferedReader(
-                new InputStreamReader(zis, StandardCharsets.UTF_8));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            sb.append(line).append("\n");
-            if (sb.length() >= MAX_FILE_CHARS) {
-                sb.append("\n... [truncated for review] ...");
-                break;
-            }
-        }
-        return sb.toString();
-    }
-
-    /** Calls Gemini to review a single file, returns parsed FileReviewDto. */
-    private FileReviewDto callAiReview(String filename, String content, String path) {
-        String prompt = """
-                You are a senior software engineer performing a professional code review.
-
-                Analyze the following code and identify:
-                1. Bugs
-                2. Security vulnerabilities
-                3. Performance issues
-                4. Code quality problems
-                5. Best practice violations
-
-                Return ONLY valid JSON. No markdown. No explanations.
-
-                Response format:
-                {
-                  "issues": [
-                    {
-                      "line": 12,
-                      "type": "Bug",
-                      "message": "Possible null pointer"
-                    }
-                  ],
-                  "suggestions": [
-                    {
-                      "line": 25,
-                      "message": "Use dependency injection"
-                    }
-                  ]
-                }
-
-                File: %s
-                Code:
-                ```
-                %s
-                ```
-                """.formatted(filename, content);
-
+    private FileReviewDto callAiAndParse(String filename, String language,
+            String relativePath, String prompt) {
         try {
             String geminiResponse = geminiClient.callGemini(prompt);
 
@@ -229,25 +157,54 @@ public class CodeReviewService {
 
             FileReviewDto dto = objectMapper.readValue(cleaned, FileReviewDto.class);
             dto.setFilename(filename);
-            dto.setPath(path);
+            dto.setPath(relativePath);
+            dto.setLanguage(language);
             return dto;
 
         } catch (Exception e) {
-            log.warn("AI review failed for file '{}': {}", filename, e.getMessage());
-            // Return empty review on parse failure so one bad file doesn't abort all others
+            log.warn("AI review failed for '{}' [{}]: {}", filename, language, e.getMessage());
             FileReviewDto dto = new FileReviewDto();
             dto.setFilename(filename);
-            dto.setPath(path);
+            dto.setPath(relativePath);
+            dto.setLanguage(language);
             dto.setIssues(List.of());
             dto.setSuggestions(List.of());
+            dto.setArchitectureInsights(List.of());
             return dto;
         }
     }
 
-    /** Serializes a list to a JSON string for DB storage. */
-    private String serializeList(Object list) {
+    /** Counts issues by type and persists the CodeReview entity. */
+    private void persistReview(Long fileId, String language, FileReviewDto review) {
+        int bugs = 0, security = 0, performance = 0;
+        if (review.getIssues() != null) {
+            for (FileReviewDto.IssueDto issue : review.getIssues()) {
+                if (issue.getType() != null) {
+                    switch (issue.getType().toLowerCase()) {
+                        case "bug" -> bugs++;
+                        case "security" -> security++;
+                        case "performance" -> performance++;
+                    }
+                }
+            }
+        }
+        codeReviewRepository.save(
+                CodeReview.builder()
+                        .fileId(fileId)
+                        .language(language)
+                        .issues(serialize(review.getIssues()))
+                        .suggestions(serialize(review.getSuggestions()))
+                        .architectureInsights(serialize(review.getArchitectureInsights()))
+                        .bugCount(bugs)
+                        .securityCount(security)
+                        .performanceCount(performance)
+                        .build());
+    }
+
+    /** Serializes an object to a JSON string for DB storage. */
+    private String serialize(Object obj) {
         try {
-            return list != null ? objectMapper.writeValueAsString(list) : "[]";
+            return obj != null ? objectMapper.writeValueAsString(obj) : "[]";
         } catch (Exception e) {
             return "[]";
         }

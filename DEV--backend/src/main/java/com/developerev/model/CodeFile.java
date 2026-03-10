@@ -27,4 +27,14 @@ public class CodeFile {
      */
     @Column(length = 1000)
     private String path;
+
+    /** Detected language from file extension, e.g. "Java", "TypeScript". */
+    private String language;
+
+    /** MD5 hex hash of file content — used for cache hit detection. */
+    @Column(length = 64)
+    private String fileHash;
+
+    /** Total number of lines in the source file. */
+    private int lineCount;
 }

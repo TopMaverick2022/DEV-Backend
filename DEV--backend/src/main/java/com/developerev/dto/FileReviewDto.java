@@ -11,14 +11,17 @@ import java.util.List;
  *
  * Example:
  * {
- * "filename": "TaskController.java",
- * "path": "src/main/java/com/example/TaskController.java",
+ * "filename": "app.py",
+ * "path": "src/app.py",
+ * "language": "Python",
  * "issues": [
- * { "line": 45, "type": "Security", "message": "SQL query built using string
- * concatenation" }
+ * { "line": 12, "type": "Security", "message": "Hardcoded secret key" }
  * ],
  * "suggestions": [
- * { "line": 45, "message": "Use prepared statements" }
+ * { "line": 12, "message": "Use environment variable for secrets" }
+ * ],
+ * "architectureInsights": [
+ * "Module lacks separation of concerns — business logic mixed with I/O"
  * ]
  * }
  */
@@ -29,8 +32,15 @@ public class FileReviewDto {
 
     private String filename;
     private String path;
+
+    /** Detected language (e.g. "Python", "Java", "TypeScript"). */
+    private String language;
+
     private List<IssueDto> issues;
     private List<SuggestionDto> suggestions;
+
+    /** High-level architecture / design observations for this file. */
+    private List<String> architectureInsights;
 
     @Data
     @NoArgsConstructor

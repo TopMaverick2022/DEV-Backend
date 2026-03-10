@@ -1,5 +1,7 @@
 package com.developerev.service;
 
+import com.developerev.ai.exception.AiResponseParsingException;
+import com.developerev.ai.exception.UnexpectedAiException;
 import com.developerev.dto.ArchitectureResponseDto;
 import com.developerev.dto.CriticalPathResponseDto;
 import com.developerev.dto.DependencyAiResponseDto;
@@ -18,6 +20,7 @@ import com.developerev.repository.FeatureRepository;
 import com.developerev.repository.SprintRepository;
 import com.developerev.repository.TaskDependencyRepository;
 import com.developerev.repository.TaskRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -114,9 +117,15 @@ public class AntiGravityService {
       }
 
       return responseDto;
+    } catch (JsonProcessingException e) {
+      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini project-plan response", e);
+      throw new AiResponseParsingException(
+          "JSON parse failure in generateProjectPlan. Raw response excerpt: "
+              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+          e);
     } catch (Exception e) {
-      log.error("Failed to parse Gemini response", e);
-      throw new RuntimeException("Error parsing AI response: " + e.getMessage(), e);
+      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateProjectPlan", e);
+      throw new UnexpectedAiException("Unexpected error in generateProjectPlan: " + e.getMessage(), e);
     }
   }
 
@@ -244,9 +253,16 @@ public class AntiGravityService {
       log.info("Generated {} sprints for feature {}", result.size(), featureId);
       return result;
 
+    } catch (JsonProcessingException e) {
+      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini sprint response", e);
+      throw new AiResponseParsingException(
+          "JSON parse failure in generateSprints for featureId=" + featureId
+              + ". Raw response excerpt: "
+              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+          e);
     } catch (Exception e) {
-      log.error("Failed to parse Gemini sprint response", e);
-      throw new RuntimeException("Error generating sprints: " + e.getMessage(), e);
+      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateSprints", e);
+      throw new UnexpectedAiException("Unexpected error in generateSprints for featureId=" + featureId + ": " + e.getMessage(), e);
     }
   }
 
@@ -368,9 +384,16 @@ public class AntiGravityService {
       log.info("Detected {} dependencies for feature {}", result.size(), featureId);
       return result;
 
+    } catch (JsonProcessingException e) {
+      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini dependency response", e);
+      throw new AiResponseParsingException(
+          "JSON parse failure in detectDependencies for featureId=" + featureId
+              + ". Raw response excerpt: "
+              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+          e);
     } catch (Exception e) {
-      log.error("Failed to parse Gemini dependency response", e);
-      throw new RuntimeException("Error detecting dependencies: " + e.getMessage(), e);
+      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in detectDependencies", e);
+      throw new UnexpectedAiException("Unexpected error in detectDependencies for featureId=" + featureId + ": " + e.getMessage(), e);
     }
   }
 
@@ -547,9 +570,16 @@ public class AntiGravityService {
 
       return responseDto;
 
+    } catch (JsonProcessingException e) {
+      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini architecture response", e);
+      throw new AiResponseParsingException(
+          "JSON parse failure in generateArchitecture for idea='" + projectIdea + "'"
+              + ". Raw response excerpt: "
+              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+          e);
     } catch (Exception e) {
-      log.error("Failed to parse Gemini architecture response", e);
-      throw new RuntimeException("Error generating architecture: " + e.getMessage(), e);
+      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateArchitecture", e);
+      throw new UnexpectedAiException("Unexpected error in generateArchitecture: " + e.getMessage(), e);
     }
   }
 

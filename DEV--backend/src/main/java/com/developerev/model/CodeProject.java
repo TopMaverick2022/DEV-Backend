@@ -21,10 +21,23 @@ public class CodeProject {
     /** Original zip filename, e.g. "springboot-project.zip". */
     private String name;
 
+    /**
+     * Processing status: PENDING → PROCESSING → DONE | FAILED.
+     * Used by the async review pipeline.
+     */
+    @Builder.Default
+    private String status = "PENDING";
+
+    /** Number of source files that were analysed by AI. */
+    @Builder.Default
+    private int filesAnalyzed = 0;
+
     private LocalDateTime uploadedAt;
 
     @PrePersist
     public void prePersist() {
         this.uploadedAt = LocalDateTime.now();
+        if (this.status == null)
+            this.status = "PENDING";
     }
 }
