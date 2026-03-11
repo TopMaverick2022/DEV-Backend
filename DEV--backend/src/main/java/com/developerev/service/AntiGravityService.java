@@ -4,6 +4,7 @@ import com.developerev.ai.exception.AiResponseParsingException;
 import com.developerev.ai.exception.UnexpectedAiException;
 import com.developerev.dto.ArchitectureResponseDto;
 import com.developerev.dto.CriticalPathResponseDto;
+import com.developerev.dto.DatabaseSchemaResponseDto;
 import com.developerev.dto.DependencyAiResponseDto;
 import com.developerev.dto.ProjectPlanResponseDto;
 import com.developerev.dto.SprintAiResponseDto;
@@ -49,6 +50,7 @@ public class AntiGravityService {
   private final ZipExtractorService zipExtractorService;
   private final DirectoryScannerService directoryScannerService;
   private final FileContentService fileContentService;
+  private final KnowledgeService knowledgeService;
 
   public ProjectPlanResponseDto generateProjectPlan(Long projectId, String featureDescription) {
 
@@ -592,6 +594,82 @@ public class AntiGravityService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // AI Database Intelligence Engine
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  public DatabaseSchemaResponseDto generateDatabaseSchema(String featureDescription) {
+
+    String prompt = """
+        You are a senior database architect.
+        
+        Convert the following user feature description into an optimized database schema.
+        
+        Include:
+        1. Entities and Tables
+        2. Columns with precise SQL data types (like BIGINT, VARCHAR, DECIMAL, TIMESTAMP)
+        3. Primary keys
+        4. Relationships
+        5. Indexes
+        
+        Return ONLY valid JSON.
+        Do not wrap the response in markdown.
+        Do not include ```json or ``` markers.
+        No explanations outside of the JSON.
+        
+        Response format:
+        {
+          "tables": [
+            {
+              "name": "Orders",
+              "columns": [
+                {"name": "order_id", "type": "BIGINT", "primaryKey": true},
+                {"name": "user_id", "type": "BIGINT", "primaryKey": false}
+              ]
+            }
+          ],
+          "relationships": [
+            "Users 1:N Orders"
+          ],
+          "indexes": [
+            "INDEX idx_user_id ON Orders(user_id)"
+          ]
+        }
+        
+        Feature Description:
+        """ + featureDescription;
+
+    log.info("Calling Gemini for Database Schema Generation: {}", featureDescription);
+    String geminiResponse = geminiClient.callGemini(prompt);
+
+    try {
+      JsonNode root = objectMapper.readTree(geminiResponse);
+      String textContent = root.path("candidates").get(0)
+          .path("content")
+          .path("parts").get(0)
+          .path("text").asText();
+
+      String cleanedResponse = textContent
+          .replace("```json", "")
+          .replace("```", "")
+          .trim();
+
+      log.debug("Gemini database schema response (cleaned): {}", cleanedResponse);
+
+      return objectMapper.readValue(cleanedResponse, DatabaseSchemaResponseDto.class);
+
+    } catch (JsonProcessingException e) {
+      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini Database Schema response", e);
+      throw new AiResponseParsingException(
+          "JSON parse failure in generateDatabaseSchema. Raw response excerpt: "
+              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+          e);
+    } catch (Exception e) {
+      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateDatabaseSchema", e);
+      throw new UnexpectedAiException("Unexpected error in generateDatabaseSchema: " + e.getMessage(), e);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // Unified AI Code Analyzer
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -601,6 +679,7 @@ public class AntiGravityService {
       throw new IllegalArgumentException("analysisType cannot be null");
     }
 
+    String knowledgeContext = knowledgeService.buildKnowledgePromptString();
     String prompt = "";
 
     switch (type.toLowerCase()) {
@@ -614,7 +693,7 @@ public class AntiGravityService {
             5. Improvement suggestions
 
             CODE:
-            """ + request.getCode();
+            """ + request.getCode() + knowledgeContext;
         break;
       case "debug":
         String errorContent = request.getErrorLog() != null ? request.getErrorLog() : request.getCode();
@@ -632,7 +711,7 @@ public class AntiGravityService {
             5. Prevention tips
 
             ERROR:
-            """ + errorContent;
+            """ + errorContent + knowledgeContext;
         break;
       case "architecture":
         prompt = """
@@ -644,7 +723,7 @@ public class AntiGravityService {
             5. Refactoring suggestions
 
             CODEBASE:
-            """ + request.getCode();
+            """ + request.getCode() + knowledgeContext;
         break;
       case "performance":
         prompt = """
@@ -662,7 +741,7 @@ public class AntiGravityService {
             Provide optimized suggestions.
 
             CODE:
-            """ + request.getCode();
+            """ + request.getCode() + knowledgeContext;
         break;
       case "edge-case":
         prompt = """
@@ -674,7 +753,7 @@ public class AntiGravityService {
             4. Recommended checks
 
             CODE:
-            """ + request.getCode();
+            """ + request.getCode() + knowledgeContext;
         break;
       case "complexity":
         prompt = """
@@ -685,7 +764,7 @@ public class AntiGravityService {
             4. Optimization suggestions
 
             CODE:
-            """ + request.getCode();
+            """ + request.getCode() + knowledgeContext;
         break;
       case "refactor":
         prompt = """
@@ -702,7 +781,7 @@ public class AntiGravityService {
             5. Improved structure
 
             CODE:
-            """ + request.getCode();
+            """ + request.getCode() + knowledgeContext;
         break;
       case "security-scan":
         prompt = """
@@ -719,7 +798,7 @@ public class AntiGravityService {
             5. Sensitive data exposure
 
             CODE:
-            """ + request.getCode();
+            """ + request.getCode() + knowledgeContext;
         break;
       case "test-generator":
         prompt = """
@@ -734,7 +813,7 @@ public class AntiGravityService {
             Use JUnit 5.
 
             CODE:
-            """ + request.getCode();
+            """ + request.getCode() + knowledgeContext;
         break;
       case "generate-docs":
         prompt = """
@@ -747,7 +826,7 @@ public class AntiGravityService {
             3. Usage examples
 
             CODE:
-            """ + request.getCode();
+            """ + request.getCode() + knowledgeContext;
         break;
       default:
         throw new IllegalArgumentException("Unknown analysisType: " + type);

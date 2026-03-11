@@ -4,11 +4,20 @@ import com.developerev.dto.ArchitectureResponseDto;
 import com.developerev.dto.ProjectReviewResponseDto;
 import com.developerev.dto.SprintDetailDto;
 import com.developerev.dto.TaskDependencyDto;
+import com.developerev.dto.DatabaseIntelligenceRequestDto;
+import com.developerev.dto.DatabaseSchemaResponseDto;
 import com.developerev.dto.AiAnalysisRequest;
+import com.developerev.dto.SystemQueryRequestDto;
+import com.developerev.dto.SystemQueryResponseDto;
+import com.developerev.dto.KnowledgeRequestDto;
+import com.developerev.dto.KnowledgeResponseDto;
 import com.developerev.dto.CodeRequest;
 import com.developerev.dto.DebugRequest;
 import com.developerev.service.AntiGravityService;
 import com.developerev.service.CodeReviewService;
+import com.developerev.service.LogAnalysisService;
+import com.developerev.service.KnowledgeService;
+import com.developerev.service.SystemIntelligenceService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +35,9 @@ public class AiController {
 
     private final AntiGravityService antiGravityService;
     private final CodeReviewService codeReviewService;
+    private final LogAnalysisService logAnalysisService;
+    private final KnowledgeService knowledgeService;
+    private final SystemIntelligenceService systemIntelligenceService;
     private final ObjectMapper objectMapper;
 
     /**
@@ -67,6 +79,24 @@ public class AiController {
         }
         try {
             return ResponseEntity.ok(antiGravityService.generateArchitecture(idea));
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /**
+     * POST /ai/generate-database-schema
+     * Generate database schemas from a feature description.
+     */
+    @PostMapping("/generate-database-schema")
+    public ResponseEntity<DatabaseSchemaResponseDto> generateDatabaseSchema(
+            @RequestBody DatabaseIntelligenceRequestDto body) {
+        String idea = body.getFeatureDescription();
+        if (idea == null || idea.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        try {
+            return ResponseEntity.ok(antiGravityService.generateDatabaseSchema(idea));
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().build();
         }
@@ -145,6 +175,17 @@ public class AiController {
         return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
     }
 
+    @PostMapping(value = "/analyze-logs", consumes = "multipart/form-data")
+    public ResponseEntity<?> analyzeLogs(@RequestParam("file") MultipartFile logFile) {
+        try {
+            return ResponseEntity.ok(logAnalysisService.analyzeLogFile(logFile));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Error parsing log file: " + e.getMessage());
+        }
+    }
+
     @PostMapping("/refactor")
     public ResponseEntity<?> refactor(@RequestBody CodeRequest request) {
         AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
@@ -193,6 +234,38 @@ public class AiController {
         analysisRequest.setAnalysisType("generate-docs");
         analysisRequest.setCode(request.getCode());
         return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
+    }
+
+    @PostMapping("/knowledge")
+    public ResponseEntity<KnowledgeResponseDto> saveKnowledge(@RequestBody KnowledgeRequestDto request) {
+        try {
+            return ResponseEntity.ok(knowledgeService.saveKnowledge(request));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @GetMapping("/knowledge")
+    public ResponseEntity<KnowledgeResponseDto> getKnowledge() {
+        try {
+            return ResponseEntity.ok(knowledgeService.getKnowledge());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    @PostMapping(value = "/system-query", consumes = "multipart/form-data")
+    public ResponseEntity<SystemQueryResponseDto> answerSystemQuery(
+            @RequestParam("project") MultipartFile zipFile,
+            @RequestParam("query") String query) {
+        if (zipFile.isEmpty() || query == null || query.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        try {
+            return ResponseEntity.ok(systemIntelligenceService.answerSystemQuery(zipFile, query));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
     }
 
 }
