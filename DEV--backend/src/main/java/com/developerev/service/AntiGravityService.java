@@ -262,7 +262,8 @@ public class AntiGravityService {
           e);
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateSprints", e);
-      throw new UnexpectedAiException("Unexpected error in generateSprints for featureId=" + featureId + ": " + e.getMessage(), e);
+      throw new UnexpectedAiException(
+          "Unexpected error in generateSprints for featureId=" + featureId + ": " + e.getMessage(), e);
     }
   }
 
@@ -393,7 +394,8 @@ public class AntiGravityService {
           e);
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in detectDependencies", e);
-      throw new UnexpectedAiException("Unexpected error in detectDependencies for featureId=" + featureId + ": " + e.getMessage(), e);
+      throw new UnexpectedAiException(
+          "Unexpected error in detectDependencies for featureId=" + featureId + ": " + e.getMessage(), e);
     }
   }
 
@@ -580,6 +582,128 @@ public class AntiGravityService {
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateArchitecture", e);
       throw new UnexpectedAiException("Unexpected error in generateArchitecture: " + e.getMessage(), e);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Unified AI Code Analyzer
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  public String analyzeCode(com.developerev.dto.AiAnalysisRequest request) {
+    String type = request.getAnalysisType();
+    if (type == null) {
+      throw new IllegalArgumentException("analysisType cannot be null");
+    }
+
+    String prompt = "";
+
+    switch (type.toLowerCase()) {
+      case "explain":
+        prompt = """
+            Analyze the following code and provide:
+            1. Code purpose
+            2. Logic breakdown
+            3. Time complexity
+            4. Space complexity
+            5. Improvement suggestions
+
+            CODE:
+            """ + request.getCode();
+        break;
+      case "debug":
+        String errorContent = request.getErrorLog() != null ? request.getErrorLog() : request.getCode();
+        prompt = """
+            Analyze the following error and provide:
+            1. Root cause
+            2. Explanation
+            3. Possible fix
+            4. Code example fix
+
+            ERROR:
+            """ + errorContent;
+        break;
+      case "architecture":
+        prompt = """
+            Analyze this codebase and provide:
+            1. Architecture style
+            2. Design pattern suggestions
+            3. Scalability issues
+            4. Layer violations
+            5. Refactoring suggestions
+
+            CODEBASE:
+            """ + request.getCode();
+        break;
+      case "performance":
+        prompt = """
+            Analyze this code and detect:
+            1. Slow algorithms
+            2. High complexity
+            3. Memory issues
+            4. Database inefficiencies
+
+            CODE:
+            """ + request.getCode();
+        break;
+      case "edge-case":
+        prompt = """
+            Analyze this code and detect missing edge cases.
+            Provide:
+            1. Missing validations
+            2. Security edge cases
+            3. Failure scenarios
+            4. Recommended checks
+
+            CODE:
+            """ + request.getCode();
+        break;
+      case "complexity":
+        prompt = """
+            Analyze this code and calculate:
+            1. Time complexity
+            2. Space complexity
+            3. Complexity explanation
+            4. Optimization suggestions
+
+            CODE:
+            """ + request.getCode();
+        break;
+      case "refactor":
+        prompt = """
+            Analyze this code and detect refactoring opportunities.
+            Provide:
+            1. Large classes
+            2. Large methods
+            3. Duplicate logic
+            4. Suggested class splits
+            5. Design improvements
+
+            CODE:
+            """ + request.getCode();
+        break;
+      default:
+        throw new IllegalArgumentException("Unknown analysisType: " + type);
+    }
+
+    log.info("Calling Gemini for {} analysis", type);
+    String geminiResponse = geminiClient.callGemini(prompt);
+
+    try {
+      com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(geminiResponse);
+      String textContent = root.path("candidates").get(0)
+          .path("content")
+          .path("parts").get(0)
+          .path("text").asText();
+
+      return textContent.replace("```markdown", "").replace("```", "").trim();
+    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini explanation response", e);
+      throw new com.developerev.ai.exception.AiResponseParsingException(
+          "JSON parse failure in analyzeCode for type=" + type, e);
+    } catch (Exception e) {
+      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in analyzeCode", e);
+      throw new com.developerev.ai.exception.UnexpectedAiException("Unexpected error in analyzeCode: " + e.getMessage(),
+          e);
     }
   }
 

@@ -4,8 +4,11 @@ import com.developerev.dto.ArchitectureResponseDto;
 import com.developerev.dto.ProjectReviewResponseDto;
 import com.developerev.dto.SprintDetailDto;
 import com.developerev.dto.TaskDependencyDto;
+import com.developerev.dto.AiAnalysisRequest;
 import com.developerev.service.AntiGravityService;
 import com.developerev.service.CodeReviewService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,6 +24,7 @@ public class AiController {
 
     private final AntiGravityService antiGravityService;
     private final CodeReviewService codeReviewService;
+    private final ObjectMapper objectMapper;
 
     /**
      * POST /ai/generate-sprints/{featureId}
@@ -87,6 +91,43 @@ public class AiController {
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * POST /ai/analyze
+     * Unified endpoint for multiple types of code analysis:
+     * explain, debug, performance, architecture, refactor, edge-case, complexity
+     * Supports either a single JSON object or a JSON array of objects.
+     */
+    @PostMapping("/analyze")
+    public ResponseEntity<?> analyzeCode(@RequestBody JsonNode requestNode) {
+        try {
+            if (requestNode.isArray()) {
+                // Return a list of responses
+                List<String> results = new java.util.ArrayList<>();
+                for (JsonNode node : requestNode) {
+                    AiAnalysisRequest request = objectMapper.treeToValue(node, AiAnalysisRequest.class);
+                    if (request.getAnalysisType() == null || request.getAnalysisType().isBlank()) {
+                        request.setAnalysisType("all");
+                    }
+                    results.add(antiGravityService.analyzeCode(request));
+                }
+                return ResponseEntity.ok(results);
+            } else if (requestNode.isObject()) {
+                // Return a single response string to maintain backward capability
+                AiAnalysisRequest request = objectMapper.treeToValue(requestNode, AiAnalysisRequest.class);
+                if (request.getAnalysisType() == null || request.getAnalysisType().isBlank()) {
+                    request.setAnalysisType("all");
+                }
+                return ResponseEntity.ok(antiGravityService.analyzeCode(request));
+            } else {
+                return ResponseEntity.badRequest().body("Invalid JSON payload format");
+            }
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Error during analysis: " + e.getMessage());
         }
     }
 }
