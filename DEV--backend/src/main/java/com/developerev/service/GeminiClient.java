@@ -56,10 +56,10 @@ public class GeminiClient {
     public GeminiClient() {
         // ── Netty HttpClient with connect + read/write timeouts ───────────────
         HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000)
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
                 .doOnConnected(conn -> conn
-                        .addHandlerLast(new ReadTimeoutHandler(30, TimeUnit.SECONDS))
-                        .addHandlerLast(new WriteTimeoutHandler(30, TimeUnit.SECONDS)));
+                        .addHandlerLast(new ReadTimeoutHandler(180, TimeUnit.SECONDS))
+                        .addHandlerLast(new WriteTimeoutHandler(180, TimeUnit.SECONDS)));
 
         this.webClient = WebClient.builder()
                 .baseUrl(BASE_URL)
