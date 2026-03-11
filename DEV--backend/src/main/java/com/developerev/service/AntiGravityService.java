@@ -26,7 +26,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +46,9 @@ public class AntiGravityService {
   private final TaskDependencyRepository taskDependencyRepository;
   private final ArchitecturePlanRepository architecturePlanRepository;
   private final ObjectMapper objectMapper;
+  private final ZipExtractorService zipExtractorService;
+  private final DirectoryScannerService directoryScannerService;
+  private final FileContentService fileContentService;
 
   public ProjectPlanResponseDto generateProjectPlan(Long projectId, String featureDescription) {
 
@@ -613,11 +619,17 @@ public class AntiGravityService {
       case "debug":
         String errorContent = request.getErrorLog() != null ? request.getErrorLog() : request.getCode();
         prompt = """
-            Analyze the following error and provide:
+            You are a senior debugging expert.
+
+            Analyze the following error log and stack trace.
+
+            Provide:
+
             1. Root cause
-            2. Explanation
+            2. Detailed explanation
             3. Possible fix
-            4. Code example fix
+            4. Example code fix
+            5. Prevention tips
 
             ERROR:
             """ + errorContent;
@@ -636,11 +648,18 @@ public class AntiGravityService {
         break;
       case "performance":
         prompt = """
-            Analyze this code and detect:
+            You are a performance optimization expert.
+
+            Analyze the following code.
+
+            Detect:
+
             1. Slow algorithms
-            2. High complexity
-            3. Memory issues
-            4. Database inefficiencies
+            2. Inefficient loops
+            3. Memory usage problems
+            4. Expensive operations
+
+            Provide optimized suggestions.
 
             CODE:
             """ + request.getCode();
@@ -670,13 +689,62 @@ public class AntiGravityService {
         break;
       case "refactor":
         prompt = """
-            Analyze this code and detect refactoring opportunities.
+            You are a senior software architect.
+
+            Analyze the following code and suggest refactoring.
+
             Provide:
-            1. Large classes
+
+            1. Code smells
             2. Large methods
             3. Duplicate logic
-            4. Suggested class splits
-            5. Design improvements
+            4. Suggested refactoring
+            5. Improved structure
+
+            CODE:
+            """ + request.getCode();
+        break;
+      case "security-scan":
+        prompt = """
+            You are a cybersecurity expert.
+
+            Analyze the following code for security vulnerabilities.
+
+            Detect:
+
+            1. SQL Injection
+            2. XSS
+            3. Authentication flaws
+            4. Unsafe deserialization
+            5. Sensitive data exposure
+
+            CODE:
+            """ + request.getCode();
+        break;
+      case "test-generator":
+        prompt = """
+            Generate unit tests for this code.
+
+            Include:
+
+            1. Normal test cases
+            2. Edge cases
+            3. Failure cases
+
+            Use JUnit 5.
+
+            CODE:
+            """ + request.getCode();
+        break;
+      case "generate-docs":
+        prompt = """
+            Generate developer documentation.
+
+            Include:
+
+            1. API description
+            2. Method explanations
+            3. Usage examples
 
             CODE:
             """ + request.getCode();
@@ -705,6 +773,73 @@ public class AntiGravityService {
       throw new com.developerev.ai.exception.UnexpectedAiException("Unexpected error in analyzeCode: " + e.getMessage(),
           e);
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Generic AI Prompt Engine
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  public String askAI(String prompt) {
+    log.info("Calling AI with custom prompt length: {}", prompt.length());
+    String geminiResponse = geminiClient.callGemini(prompt);
+
+    try {
+      com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(geminiResponse);
+      String textContent = root.path("candidates").get(0)
+          .path("content")
+          .path("parts").get(0)
+          .path("text").asText();
+
+      return textContent.replace("```json", "").replace("```markdown", "").replace("```", "").trim();
+    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini response for custom prompt", e);
+      throw new com.developerev.ai.exception.AiResponseParsingException("JSON parse failure in askAI", e);
+    } catch (Exception e) {
+      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in askAI", e);
+      throw new com.developerev.ai.exception.UnexpectedAiException("Unexpected error in askAI: " + e.getMessage(), e);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Dependency Graph Generator
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  public String generateDependencyGraph(MultipartFile zipFile) {
+      Path tempDir = null;
+      try {
+          tempDir = zipExtractorService.extractZip(zipFile);
+          List<Path> sourceFiles = directoryScannerService.scan(tempDir);
+
+          StringBuilder codeBase = new StringBuilder();
+          for (Path file : sourceFiles) {
+              String filename = file.getFileName().toString();
+              String content = fileContentService.readFile(file);
+              codeBase.append("\n--- ").append(filename).append(" ---\n");
+              codeBase.append(content).append("\n");
+          }
+
+          String prompt = """
+              Analyze this project and generate dependency graph.
+
+              Provide:
+
+              1. Modules
+              2. Dependencies
+              3. Circular dependencies
+              4. Architecture diagram text
+
+              CODEBASE:
+              """ + codeBase.toString();
+
+          return askAI(prompt);
+      } catch (IOException e) {
+          log.error("Error processing zip file for dependency graph", e);
+          throw new RuntimeException("Error processing zip file: " + e.getMessage(), e);
+      } finally {
+          if (tempDir != null) {
+              zipExtractorService.cleanup(tempDir);
+          }
+      }
   }
 
 }

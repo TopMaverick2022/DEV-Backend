@@ -5,6 +5,8 @@ import com.developerev.dto.ProjectReviewResponseDto;
 import com.developerev.dto.SprintDetailDto;
 import com.developerev.dto.TaskDependencyDto;
 import com.developerev.dto.AiAnalysisRequest;
+import com.developerev.dto.CodeRequest;
+import com.developerev.dto.DebugRequest;
 import com.developerev.service.AntiGravityService;
 import com.developerev.service.CodeReviewService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -130,4 +132,67 @@ public class AiController {
             return ResponseEntity.internalServerError().body("Error during analysis: " + e.getMessage());
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Individual AI Feature Endpoints
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    @PostMapping("/debug")
+    public ResponseEntity<?> debugError(@RequestBody DebugRequest request) {
+        AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
+        analysisRequest.setAnalysisType("debug");
+        analysisRequest.setErrorLog(request.getErrorLog());
+        return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
+    }
+
+    @PostMapping("/refactor")
+    public ResponseEntity<?> refactor(@RequestBody CodeRequest request) {
+        AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
+        analysisRequest.setAnalysisType("refactor");
+        analysisRequest.setCode(request.getCode());
+        return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
+    }
+
+    @PostMapping("/security-scan")
+    public ResponseEntity<?> securityScan(@RequestBody CodeRequest request) {
+        AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
+        analysisRequest.setAnalysisType("security-scan");
+        analysisRequest.setCode(request.getCode());
+        return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
+    }
+
+    @PostMapping("/performance")
+    public ResponseEntity<?> performanceCheck(@RequestBody CodeRequest request) {
+        AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
+        analysisRequest.setAnalysisType("performance");
+        analysisRequest.setCode(request.getCode());
+        return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
+    }
+
+    @PostMapping(value = "/dependency-graph", consumes = "multipart/form-data")
+    public ResponseEntity<?> dependencyGraph(@RequestParam("file") MultipartFile zip) {
+        try {
+            String result = antiGravityService.generateDependencyGraph(zip);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("Error generating dependency graph: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/test-generator")
+    public ResponseEntity<?> generateTests(@RequestBody CodeRequest request) {
+        AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
+        analysisRequest.setAnalysisType("test-generator");
+        analysisRequest.setCode(request.getCode());
+        return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
+    }
+
+    @PostMapping("/generate-docs")
+    public ResponseEntity<?> generateDocs(@RequestBody CodeRequest request) {
+        AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
+        analysisRequest.setAnalysisType("generate-docs");
+        analysisRequest.setCode(request.getCode());
+        return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
+    }
+
 }
