@@ -51,6 +51,7 @@ public class AntiGravityService {
   private final DirectoryScannerService directoryScannerService;
   private final FileContentService fileContentService;
   private final KnowledgeService knowledgeService;
+  private final ActivityLogService activityLogService;
 
   public ProjectPlanResponseDto generateProjectPlan(Long projectId, String featureDescription) {
 
@@ -124,6 +125,7 @@ public class AntiGravityService {
         }
       }
 
+      activityLogService.logCurrentUserActivity(projectId, "Generated Project Plan", "Generated AI plan for feature: " + featureDescription);
       return responseDto;
     } catch (JsonProcessingException e) {
       log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini project-plan response", e);
@@ -259,6 +261,7 @@ public class AntiGravityService {
       }
 
       log.info("Generated {} sprints for feature {}", result.size(), featureId);
+      activityLogService.logCurrentUserActivity(feature.getProjectId(), "Generated Sprints", "Generated AI sprints for feature: " + feature.getName());
       return result;
 
     } catch (JsonProcessingException e) {
@@ -391,6 +394,11 @@ public class AntiGravityService {
       }
 
       log.info("Detected {} dependencies for feature {}", result.size(), featureId);
+      
+      Long projectId = null;
+      if (!tasks.isEmpty()) { projectId = tasks.get(0).getProjectId(); }
+      activityLogService.logCurrentUserActivity(projectId, "Detected Dependencies", "Detected task dependencies for feature ID: " + featureId);
+      
       return result;
 
     } catch (JsonProcessingException e) {
@@ -490,6 +498,10 @@ public class AntiGravityService {
     log.info("Critical path for feature {}: {} hours, {} tasks",
         featureId, criticalPathHours, path.size());
 
+    Long projectId = null;
+    if (!tasks.isEmpty()) { projectId = tasks.get(0).getProjectId(); }
+    activityLogService.logCurrentUserActivity(projectId, "Computed Critical Path", "Computed critical path for feature ID: " + featureId);
+
     return new CriticalPathResponseDto(criticalPathHours, new ArrayList<>(path));
   }
 
@@ -577,6 +589,8 @@ public class AntiGravityService {
           responseDto.getServices() != null ? responseDto.getServices().size() : 0,
           responseDto.getApis() != null ? responseDto.getApis().size() : 0,
           responseDto.getEvents() != null ? responseDto.getEvents().size() : 0);
+          
+      activityLogService.logCurrentUserActivity(null, "Generated Architecture", "Generated system architecture plan");
 
       return responseDto;
 
@@ -654,6 +668,8 @@ public class AntiGravityService {
           .trim();
 
       log.debug("Gemini database schema response (cleaned): {}", cleanedResponse);
+
+      activityLogService.logCurrentUserActivity(null, "Generated Database Schema", "Generated DB schema design");
 
       return objectMapper.readValue(cleanedResponse, DatabaseSchemaResponseDto.class);
 
@@ -842,7 +858,9 @@ public class AntiGravityService {
           .path("parts").get(0)
           .path("text").asText();
 
-      return textContent.replace("```markdown", "").replace("```", "").trim();
+      String answer = textContent.replace("```markdown", "").replace("```", "").trim();
+      activityLogService.logCurrentUserActivity(null, "Analyzed Code", "Ran " + type + " analysis on codebase");
+      return answer;
     } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
       log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini explanation response", e);
       throw new com.developerev.ai.exception.AiResponseParsingException(

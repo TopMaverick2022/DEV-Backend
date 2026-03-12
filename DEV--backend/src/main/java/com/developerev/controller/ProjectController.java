@@ -35,4 +35,31 @@ public class ProjectController {
         projectService.deleteProject(id, username);
         return ResponseEntity.ok("Project deleted successfully");
     }
+
+    @PutMapping("/{id}/settings")
+    public ResponseEntity<Project> updateProjectSettings(
+            @PathVariable Long id, 
+            @RequestBody Project updatedProject, 
+            Authentication authentication) {
+        String username = authentication.getName();
+        return ResponseEntity.ok(projectService.updateProjectSettings(id, username, updatedProject));
+    }
+
+    @PostMapping("/{id}/members")
+    public ResponseEntity<String> addProjectMember(
+            @PathVariable Long id, 
+            @RequestBody com.developerev.dto.AddProjectMemberRequestDto request, 
+            Authentication authentication) {
+        String username = authentication.getName();
+        projectService.addProjectMember(id, username, request);
+        return ResponseEntity.ok("Project member added successfully");
+    }
+
+    @GetMapping("/{id}/members")
+    public ResponseEntity<List<String>> getProjectMembers(
+            @PathVariable Long id, 
+            Authentication authentication) {
+        String username = authentication.getName();
+        return ResponseEntity.ok(projectService.getProjectMembers(id, username));
+    }
 }
