@@ -39,8 +39,8 @@ public class User {
 
     private String providerId;
 
-    @Column(nullable = false)
-    private boolean isVerified = false;
+    @Column(name = "is_verified", nullable = false)
+    private boolean verified = false;
 
     @CreationTimestamp
     @Column(updatable = false)

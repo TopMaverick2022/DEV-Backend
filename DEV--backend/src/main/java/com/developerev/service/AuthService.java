@@ -148,6 +148,7 @@ public class AuthService {
             throw new RuntimeException("User is already verified");
         }
 
+        verificationTokenRepository.deleteByUser(user);
         String otp = generateOtp();
         createVerificationToken(user, otp, VerificationToken.TokenType.EMAIL_VERIFICATION);
 
