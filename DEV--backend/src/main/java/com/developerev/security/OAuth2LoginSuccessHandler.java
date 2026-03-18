@@ -78,10 +78,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
 
         String accessToken = jwtUtil.generateToken(user.getUsername());
         
-        response.setContentType("application/json");
-        response.getWriter().write("{\n" +
-                "  \"message\": \"OAuth2 Login Successful\",\n" +
-                "  \"accessToken\": \"" + accessToken + "\"\n" +
-                "}");
+        String targetUrl = "http://localhost:5173/oauth/callback?token=" + accessToken;
+        response.sendRedirect(targetUrl);
     }
 }

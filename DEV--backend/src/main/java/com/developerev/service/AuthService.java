@@ -8,6 +8,7 @@ import com.developerev.repository.VerificationTokenRepository;
 import com.developerev.security.JwtUtil;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -107,10 +108,6 @@ public class AuthService {
         String accessToken = jwtUtil.generateToken(user.getUsername());
         String refreshToken = createRefreshToken(user).getToken();
 
-        // Send login notification asynchronously or synchronously
-        emailService.sendEmail(user.getEmail(), "DeveloperEV - New Login Detected",
-                "Hello " + user.getUsername() + ",\n\nWe noticed a new login to your DeveloperEV account. If this was you, you can safely ignore this email.");
-
         return new AuthResponse(accessToken, refreshToken);
     }
 
@@ -187,7 +184,12 @@ public class AuthService {
     @Transactional
     public void resetPassword(ResetPasswordRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + request.getEmail()));
+
+        // Check if the new password is the same as the old one
+        if (passwordEncoder.matches(request.getNewPassword(), user.getPassword())) {
+            throw new RuntimeException("New password cannot be the same as the current password");
+        }
 
         VerificationToken token = verificationTokenRepository.findByToken(request.getCode())
                 .orElseThrow(() -> new RuntimeException("Invalid reset code"));
