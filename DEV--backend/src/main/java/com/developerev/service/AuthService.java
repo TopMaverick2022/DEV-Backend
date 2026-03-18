@@ -134,6 +134,10 @@ public class AuthService {
         user.setVerified(true);
         userRepository.save(user);
         verificationTokenRepository.delete(token);
+
+        // Send welcome email
+        emailService.sendEmail(user.getEmail(), "Welcome to DeveloperEV!",
+                "Hello " + (user.getUsername() != null ? user.getUsername() : "there") + ",\n\nWelcome to DeveloperEV! Your account has been successfully verified. We're excited to have you on board!");
     }
 
     @Transactional
@@ -206,6 +210,10 @@ public class AuthService {
         user.setVerified(true);
         userRepository.save(user);
         verificationTokenRepository.delete(token);
+
+        // Send password change success email
+        emailService.sendEmail(user.getEmail(), "DeveloperEV - Password Changed Successfully",
+                "Hello " + user.getUsername() + ",\n\nYour password has been successfully changed. If you did not perform this action, please contact support immediately.");
     }
 
     private void createVerificationToken(User user, String token, VerificationToken.TokenType type) {
