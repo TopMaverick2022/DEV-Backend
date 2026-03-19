@@ -12,6 +12,7 @@ import com.developerev.ai.exception.RateLimitExceededException;
 import com.developerev.ai.exception.UnexpectedAiException;
 import com.developerev.ai.exception.UnsupportedLanguageException;
 import com.developerev.dto.ApiErrorResponse;
+import com.developerev.exception.auth.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -23,21 +24,47 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Centralized exception handler for all API endpoints.
- *
- * <p>Mapping strategy:
- * <ul>
- *   <li>All {@link GeminiApiException} subclasses → typed HTTP status + {@link ApiErrorResponse}</li>
- *   <li>Any other uncaught {@link Exception} → HTTP 500 (last-resort fallback)</li>
- * </ul>
- *
- * <p>Every handler logs a structured {@code [AI_ERROR]} line with the debug message
- * so that server logs stay actionable without leaking internal details to API consumers.
- */
 @Slf4j
 @ControllerAdvice
 public class GlobalExceptionHandler {
+
+    // --- Authentication Exceptions ---
+
+    @ExceptionHandler(UserAlreadyExistsException.class)
+    public ResponseEntity<ApiErrorResponse> handleUserAlreadyExists(UserAlreadyExistsException ex) {
+        return createErrorResponse(HttpStatus.CONFLICT, "User Conflict", ex);
+    }
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ResponseEntity<ApiErrorResponse> handleInvalidCredentials(InvalidCredentialsException ex) {
+        return createErrorResponse(HttpStatus.UNAUTHORIZED, "Invalid Credentials", ex);
+    }
+
+    @ExceptionHandler(EmailNotVerifiedException.class)
+    public ResponseEntity<ApiErrorResponse> handleEmailNotVerified(EmailNotVerifiedException ex) {
+        return createErrorResponse(HttpStatus.FORBIDDEN, "Email Not Verified", ex);
+    }
+
+    @ExceptionHandler(InvalidVerificationTokenException.class)
+    public ResponseEntity<ApiErrorResponse> handleInvalidVerificationToken(InvalidVerificationTokenException ex) {
+        return createErrorResponse(HttpStatus.BAD_REQUEST, "Invalid Token", ex);
+    }
+
+    @ExceptionHandler(VerificationTokenExpiredException.class)
+    public ResponseEntity<ApiErrorResponse> handleVerificationTokenExpired(VerificationTokenExpiredException ex) {
+        return createErrorResponse(HttpStatus.BAD_REQUEST, "Token Expired", ex);
+    }
+
+    @ExceptionHandler(SamePasswordException.class)
+    public ResponseEntity<ApiErrorResponse> handleSamePassword(SamePasswordException ex) {
+        return createErrorResponse(HttpStatus.BAD_REQUEST, "Invalid Password", ex);
+    }
+
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleUserNotFound(UserNotFoundException ex) {
+        return createErrorResponse(HttpStatus.NOT_FOUND, "User Not Found", ex);
+    }
+
 
     // ── 429 Too Many Requests ──────────────────────────────────────────────────
 
@@ -116,14 +143,28 @@ public class GlobalExceptionHandler {
      * Handle Javax/Jakarta Validation Errors (@Valid)
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, String>> handleValidationExceptions(MethodArgumentNotValidException ex) {
+    public ResponseEntity<ApiErrorResponse> handleValidationExceptions(MethodArgumentNotValidException ex) {
         Map<String, String> errors = new HashMap<>();
         ex.getBindingResult().getAllErrors().forEach((error) -> {
             String fieldName = ((FieldError) error).getField();
             String errorMessage = error.getDefaultMessage();
             errors.put(fieldName, errorMessage);
         });
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errors);
+
+        String userMessage = errors.entrySet().stream()
+                .map(entry -> entry.getKey() + ": " + entry.getValue())
+                .reduce((acc, next) -> acc + ", " + next)
+                .orElse("Validation failed");
+
+        ApiErrorResponse body = ApiErrorResponse.builder()
+                .status(HttpStatus.BAD_REQUEST.value())
+                .error("Validation Error")
+                .userMessage(userMessage)
+                .debugMessage(ex.getMessage())
+                .retryable(false)
+                .build();
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
     /**
@@ -140,7 +181,7 @@ public class GlobalExceptionHandler {
         ApiErrorResponse body = ApiErrorResponse.builder()
                 .status(HttpStatus.INTERNAL_SERVER_ERROR.value())
                 .error("Internal Server Error")
-                .userMessage("An unexpected system error occurred during AI analysis.")
+                .userMessage("An unexpected system error occurred.")
                 .debugMessage(ex.getMessage())
                 .retryable(false)
                 .build();
@@ -148,6 +189,18 @@ public class GlobalExceptionHandler {
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────────────
+
+    private ResponseEntity<ApiErrorResponse> createErrorResponse(HttpStatus status, String error, RuntimeException ex) {
+        log.warn("[AUTH_ERROR][{}] {}", error.toUpperCase().replace(' ', '_'), ex.getMessage());
+        ApiErrorResponse body = ApiErrorResponse.builder()
+                .status(status.value())
+                .error(error)
+                .userMessage(ex.getMessage())
+                .debugMessage(ex.getClass().getSimpleName())
+                .retryable(false)
+                .build();
+        return ResponseEntity.status(status).body(body);
+    }
 
     private void log(String prefix, GeminiApiException ex) {
         log.error("{} retryable={} | debug: {}", prefix, ex.isRetryable(), ex.getDebugMessage(), ex);

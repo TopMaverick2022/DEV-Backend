@@ -2,13 +2,14 @@ package com.developerev.service;
 
 import com.developerev.dto.*;
 import com.developerev.entity.*;
+import com.developerev.exception.auth.*;
 import com.developerev.repository.RefreshTokenRepository;
 import com.developerev.repository.UserRepository;
 import com.developerev.repository.VerificationTokenRepository;
 import com.developerev.security.JwtUtil;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,7 +50,7 @@ public class AuthService {
         var existingByUsername = userRepository.findByUsername(request.getUsername());
         if (existingByUsername.isPresent()) {
             if (existingByUsername.get().isVerified()) {
-                throw new RuntimeException("Username is already taken");
+                throw new UserAlreadyExistsException("Username is already taken");
             } else {
                 user = existingByUsername.get();
             }
@@ -59,10 +60,10 @@ public class AuthService {
         var existingByEmail = userRepository.findByEmail(request.getEmail());
         if (existingByEmail.isPresent()) {
             if (existingByEmail.get().isVerified()) {
-                throw new RuntimeException("Email is already taken");
+                throw new UserAlreadyExistsException("Email is already taken");
             } else {
                 if (user != null && !user.getId().equals(existingByEmail.get().getId())) {
-                    throw new RuntimeException("Email is associated with a different unverified account");
+                    throw new UserAlreadyExistsException("Email is associated with a different unverified account");
                 }
                 user = existingByEmail.get();
             }
@@ -76,13 +77,27 @@ public class AuthService {
             user.setRole(Role.USER);
             user.setProvider(AuthProvider.LOCAL);
             user.setVerified(false);
+            user.setPassword(passwordEncoder.encode(request.getPassword()));
         } else {
-            // If user exists and is unverified, delete old verification tokens
+            // If user exists and is unverified, check password history, then update password
+            for (String oldPassword : user.getPasswordHistory()) {
+                if (passwordEncoder.matches(request.getPassword(), oldPassword)) {
+                    throw new PasswordAlreadyUsedException("New password cannot be one of the last 12 passwords used.");
+                }
+            }
+            // Add old password to history and trim
+            if(user.getPassword() != null && !user.getPassword().isEmpty()){
+                user.getPasswordHistory().add(user.getPassword());
+                if (user.getPasswordHistory().size() > 12) {
+                    user.getPasswordHistory().remove(0);
+                }
+            }
+            user.setPassword(passwordEncoder.encode(request.getPassword()));
+
+            // Delete old verification tokens
             verificationTokenRepository.deleteByUser(user);
         }
 
-        // Set or update the password
-        user.setPassword(passwordEncoder.encode(request.getPassword()));
         userRepository.save(user);
 
         // Generate OTP
@@ -95,14 +110,18 @@ public class AuthService {
 
     @Transactional
     public AuthResponse login(AuthRequest request) {
-        authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword()));
+        try {
+            authenticationManager.authenticate(
+                    new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword()));
+        } catch (BadCredentialsException e) {
+            throw new InvalidCredentialsException("Invalid username or password");
+        }
 
         User user = userRepository.findByUsername(request.getUsername())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
 
         if (!user.isVerified()) {
-            throw new RuntimeException("Email not verified. Please verify your email first.");
+            throw new EmailNotVerifiedException("Email not verified. Please verify your email first.");
         }
 
         String accessToken = jwtUtil.generateToken(user.getUsername());
@@ -114,21 +133,23 @@ public class AuthService {
     @Transactional
     public void verifyEmail(VerificationRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
 
         if (user.isVerified()) {
-            throw new RuntimeException("User is already verified");
+            // This is not an error, just idempotent
+            return;
         }
 
         VerificationToken token = verificationTokenRepository.findByToken(request.getCode())
-                .orElseThrow(() -> new RuntimeException("Invalid verification code"));
+                .orElseThrow(() -> new InvalidVerificationTokenException("Invalid verification code"));
 
-        if (!token.getUser().getId().equals(user.getId()) || token.getType() != VerificationToken.TokenType.EMAIL_VERIFICATION) {
-            throw new RuntimeException("Invalid verification code for this user");
+        if (!token.getUser().getId().equals(user.getId())
+                || token.getType() != VerificationToken.TokenType.EMAIL_VERIFICATION) {
+            throw new InvalidVerificationTokenException("Invalid verification code for this user");
         }
 
         if (token.getExpiryDate().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("Verification code has expired");
+            throw new VerificationTokenExpiredException("Verification code has expired");
         }
 
         user.setVerified(true);
@@ -137,16 +158,17 @@ public class AuthService {
 
         // Send welcome email
         emailService.sendEmail(user.getEmail(), "Welcome to DeveloperEV!",
-                "Hello " + (user.getUsername() != null ? user.getUsername() : "there") + ",\n\nWelcome to DeveloperEV! Your account has been successfully verified. We're excited to have you on board!");
+                "Hello " + (user.getUsername() != null ? user.getUsername() : "there")
+                        + ",\n\nWelcome to DeveloperEV! Your account has been successfully verified. We're excited to have you on board!");
     }
 
     @Transactional
     public void resendVerificationToken(String email) {
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException("User not found"));
 
         if (user.isVerified()) {
-            throw new RuntimeException("User is already verified");
+            throw new UserAlreadyExistsException("User is already verified");
         }
 
         verificationTokenRepository.deleteByUser(user);
@@ -160,23 +182,23 @@ public class AuthService {
     @Transactional
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         RefreshToken refreshToken = refreshTokenRepository.findByToken(request.getToken())
-                .orElseThrow(() -> new RuntimeException("Invalid refresh token"));
+                .orElseThrow(() -> new InvalidVerificationTokenException("Invalid refresh token"));
 
         if (refreshToken.getExpiryDate().isBefore(LocalDateTime.now())) {
             refreshTokenRepository.delete(refreshToken);
-            throw new RuntimeException("Refresh token has expired. Please sign in again.");
+            throw new VerificationTokenExpiredException("Refresh token has expired. Please sign in again.");
         }
 
         User user = refreshToken.getUser();
         String accessToken = jwtUtil.generateToken(user.getUsername());
-        
+
         return new AuthResponse(accessToken, request.getToken());
     }
 
     @Transactional
     public void forgotPassword(ForgotPasswordRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("User not found"));
+                .orElseThrow(() -> new UserNotFoundException("User not found with email: " + request.getEmail()));
 
         String otp = generateOtp();
         createVerificationToken(user, otp, VerificationToken.TokenType.PASSWORD_RESET);
@@ -188,32 +210,46 @@ public class AuthService {
     @Transactional
     public void resetPassword(ResetPasswordRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + request.getEmail()));
+                .orElseThrow(() -> new UserNotFoundException("User not found with email: " + request.getEmail()));
 
         // Check if the new password is the same as the old one
         if (passwordEncoder.matches(request.getNewPassword(), user.getPassword())) {
-            throw new RuntimeException("New password cannot be the same as the current password");
+            throw new SamePasswordException("New password cannot be the same as the current password");
+        }
+        
+        // Check password history
+        for (String oldPassword : user.getPasswordHistory()) {
+            if (passwordEncoder.matches(request.getNewPassword(), oldPassword)) {
+                throw new PasswordAlreadyUsedException("New password cannot be one of the last 12 passwords used.");
+            }
         }
 
         VerificationToken token = verificationTokenRepository.findByToken(request.getCode())
-                .orElseThrow(() -> new RuntimeException("Invalid reset code"));
+                .orElseThrow(() -> new InvalidVerificationTokenException("Invalid reset code"));
 
         if (!token.getUser().getId().equals(user.getId()) || token.getType() != VerificationToken.TokenType.PASSWORD_RESET) {
-            throw new RuntimeException("Invalid reset code for this user");
+            throw new InvalidVerificationTokenException("Invalid reset code for this user");
         }
 
         if (token.getExpiryDate().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("Reset code has expired");
+            throw new VerificationTokenExpiredException("Reset code has expired");
+        }
+        
+        // Add old password to history and trim
+        user.getPasswordHistory().add(user.getPassword());
+        if (user.getPasswordHistory().size() > 12) {
+            user.getPasswordHistory().remove(0);
         }
 
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
-        user.setVerified(true);
+        user.setVerified(true); // Also verify the user on password reset
         userRepository.save(user);
         verificationTokenRepository.delete(token);
 
         // Send password change success email
         emailService.sendEmail(user.getEmail(), "DeveloperEV - Password Changed Successfully",
-                "Hello " + user.getUsername() + ",\n\nYour password has been successfully changed. If you did not perform this action, please contact support immediately.");
+                "Hello " + user.getUsername()
+                        + ",\n\nYour password has been successfully changed. If you did not perform this action, please contact support immediately.");
     }
 
     private void createVerificationToken(User user, String token, VerificationToken.TokenType type) {
@@ -221,7 +257,8 @@ public class AuthService {
         verificationToken.setToken(token);
         verificationToken.setUser(user);
         verificationToken.setType(type);
-        verificationToken.setExpiryDate(LocalDateTime.now().plusMinutes(15));
+        // OTP valid for 2 minutes as requested by user
+        verificationToken.setExpiryDate(LocalDateTime.now().plusMinutes(2)); 
         verificationTokenRepository.save(verificationToken);
     }
 
@@ -239,3 +276,4 @@ public class AuthService {
         return String.valueOf(otp);
     }
 }
+

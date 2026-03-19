@@ -7,6 +7,8 @@ import lombok.Setter;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "users")
@@ -28,6 +30,11 @@ public class User {
 
     @Column
     private String password;
+
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "user_password_history", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "password", nullable = false)
+    private List<String> passwordHistory = new ArrayList<>();
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
