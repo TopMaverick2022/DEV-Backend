@@ -131,6 +131,57 @@ public class CodeReviewService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Workspace entry point (for JGit clones, NO ZIP INVOLVED)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public ProjectReviewResponseDto reviewWorkspace(Path workspaceDir, String projectName) throws IOException {
+        log.info("Analyzing workspace directory: {}", workspaceDir.toString());
+
+        CodeProject project = codeProjectRepository.save(
+                CodeProject.builder()
+                        .name(projectName)
+                        .build());
+        log.info("Created CodeProject id={} name={}", project.getId(), project.getName());
+
+        List<FileReviewDto> fileReviews = new ArrayList<>();
+        List<Path> sourceFiles = directoryScannerService.scan(workspaceDir);
+
+        for (Path file : sourceFiles) {
+            String language = languageDetectionService.detectLanguage(file);
+            String filename = file.getFileName().toString();
+            String content = fileContentService.readFile(file);
+            
+            if (content.isBlank()) continue;
+
+            CodeFile codeFile = codeFileRepository.save(
+                    CodeFile.builder()
+                            .projectId(project.getId())
+                            .filename(filename)
+                            .path(workspaceDir.relativize(file).toString().replace("\\", "/"))
+                            .build());
+
+            log.info("Sending workspace file to AI: {} [{}]", filename, language);
+            String prompt = aiPromptBuilder.buildPrompt(filename, language, content);
+            FileReviewDto review = callAiAndParse(filename, language,
+                    workspaceDir.relativize(file).toString().replace("\\", "/"), prompt);
+
+            persistReview(codeFile.getId(), language, review);
+            fileReviews.add(review);
+        }
+
+        log.info("Workspace code review complete: {} files reviewed for project id={}",
+                fileReviews.size(), project.getId());
+
+        return ProjectReviewResponseDto.builder()
+                .projectId(project.getId())
+                .projectName(project.getName())
+                .totalFilesReviewed(fileReviews.size())
+                .fileReviews(fileReviews)
+                .status("DONE")
+                .build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────
 

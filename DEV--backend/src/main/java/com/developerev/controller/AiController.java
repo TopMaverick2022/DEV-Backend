@@ -39,6 +39,8 @@ public class AiController {
     private final KnowledgeService knowledgeService;
     private final SystemIntelligenceService systemIntelligenceService;
     private final ObjectMapper objectMapper;
+    private final com.developerev.service.GitService gitService;
+    private final com.developerev.repository.ProjectRepository projectRepository;
 
     /**
      * POST /ai/generate-sprints/{featureId}
@@ -120,6 +122,39 @@ public class AiController {
         }
         try {
             ProjectReviewResponseDto result = codeReviewService.reviewProject(zipFile);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * POST /ai/analyze-workspace/{projectId}
+     *
+     * Analyzes a project that has already been cloned to the server via GitService.
+     * No zip upload needed.
+     */
+    @PostMapping("/analyze-workspace/{projectId}")
+    public ResponseEntity<ProjectReviewResponseDto> analyzeWorkspace(
+            @PathVariable Long projectId,
+            @RequestParam("projectName") String projectName) {
+        try {
+            java.nio.file.Path workspaceDir = java.nio.file.Paths.get("workspaces", "project_" + projectId)
+                    .toAbsolutePath().normalize();
+            if (!java.nio.file.Files.exists(workspaceDir)) {
+                return ResponseEntity.badRequest().build();
+            }
+            ProjectReviewResponseDto result = codeReviewService.reviewWorkspace(workspaceDir, projectName);
+            
+            // Save the last analyzed commit SHA
+            String latestCommit = gitService.getLatestCommitSha(projectId);
+            if (latestCommit != null) {
+                projectRepository.findById(projectId).ifPresent(p -> {
+                    p.setLastAnalyzedCommit(latestCommit);
+                    projectRepository.save(p);
+                });
+            }
+            
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();

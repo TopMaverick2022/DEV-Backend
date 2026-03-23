@@ -62,5 +62,13 @@ public class ProjectController {
         String username = authentication.getName();
         return ResponseEntity.ok(projectService.getProjectMembers(id, username));
     }
+
+    @GetMapping("/{id}/stats")
+    public ResponseEntity<com.developerev.dto.ProjectStatsDto> getProjectStats(
+            @PathVariable("id") Long id,
+            Authentication authentication) {
+        String username = authentication.getName();
+        return ResponseEntity.ok(projectService.getProjectStats(id, username));
+    }
 }
 

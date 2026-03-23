@@ -8,4 +8,5 @@ import java.util.List;
 public interface ActivityLogRepository extends JpaRepository<ActivityLog, Long> {
     List<ActivityLog> findByProjectIdOrderByTimestampDesc(Long projectId);
     List<ActivityLog> findByUserIdOrderByTimestampDesc(Long userId);
+    void deleteByProjectId(Long projectId);
 }

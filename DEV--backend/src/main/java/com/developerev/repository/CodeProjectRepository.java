@@ -11,4 +11,6 @@ public interface CodeProjectRepository extends JpaRepository<CodeProject, Long> 
 
     /** Used to find PENDING/PROCESSING projects (e.g. for recovery on restart). */
     List<CodeProject> findByStatus(String status);
+    
+    CodeProject findTopByNameOrderByIdDesc(String name);
 }

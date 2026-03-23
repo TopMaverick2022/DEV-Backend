@@ -28,6 +28,9 @@ public class Project {
 
     private String githubRepoUrl;
 
+    @Column(name = "last_analyzed_commit")
+    private String lastAnalyzedCommit;
+
     @Column(updatable = false)
     private LocalDateTime createdAt;
 

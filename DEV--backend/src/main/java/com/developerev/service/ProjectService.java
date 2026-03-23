@@ -4,6 +4,7 @@ import com.developerev.dto.AddProjectMemberRequestDto;
 import com.developerev.entity.User;
 import com.developerev.model.Project;
 import com.developerev.model.ProjectMember;
+import com.developerev.repository.ActivityLogRepository;
 import com.developerev.repository.ProjectMemberRepository;
 import com.developerev.repository.ProjectRepository;
 import com.developerev.repository.UserRepository;
@@ -14,6 +15,10 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import com.developerev.repository.CodeFileRepository;
+import com.developerev.repository.CodeProjectRepository;
+import com.developerev.repository.CodeReviewRepository;
+
 @Service
 @RequiredArgsConstructor
 public class ProjectService {
@@ -22,6 +27,13 @@ public class ProjectService {
     private final ProjectMemberRepository projectMemberRepository;
     private final UserRepository userRepository;
     private final ActivityLogService activityLogService;
+    private final ActivityLogRepository activityLogRepository;
+    
+    // AI Integration Fields
+    private final CodeProjectRepository codeProjectRepository;
+    private final CodeFileRepository codeFileRepository;
+    private final CodeReviewRepository codeReviewRepository;
+    private final GitService gitService;
 
     public Project createProject(String username, Project project) {
         User user = userRepository.findByUsername(username)
@@ -125,12 +137,17 @@ public class ProjectService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional
     public void deleteProject(Long projectId, String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
         Project project = projectRepository.findByIdAndOwner(projectId, user)
                 .orElseThrow(() -> new RuntimeException("Project not found or you are not the owner"));
+
+        // Delete child records first to satisfy FK constraints
+        activityLogRepository.deleteByProjectId(projectId);
+        projectMemberRepository.deleteByProjectId(projectId);
 
         projectRepository.delete(project);
     }
@@ -155,5 +172,56 @@ public class ProjectService {
                     }
                     throw new RuntimeException("Not a member of this project");
                 });
+    }
+
+    public com.developerev.dto.ProjectStatsDto getProjectStats(Long projectId, String username) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project not found"));
+        getOrAssignAdminMember(project, userRepository.findByUsername(username).orElseThrow());
+
+        int bugs = 0, security = 0, perf = 0;
+        int filesAnalyzed = 0;
+
+        com.developerev.model.CodeProject cp = codeProjectRepository.findTopByNameOrderByIdDesc(project.getName());
+        if (cp != null) {
+            List<com.developerev.model.CodeFile> files = codeFileRepository.findByProjectId(cp.getId());
+            filesAnalyzed = files.size();
+            for (com.developerev.model.CodeFile file : files) {
+                List<com.developerev.model.CodeReview> reviews = codeReviewRepository.findByFileId(file.getId());
+                for (com.developerev.model.CodeReview r : reviews) {
+                    bugs += r.getBugCount();
+                    security += r.getSecurityCount();
+                    perf += r.getPerformanceCount();
+                }
+            }
+        }
+
+        // Calculate health score: start at 100, deduct points (Bugs=2, Security=5, Perf=1)
+        int healthScore = 100 - (bugs * 2) - (security * 5) - perf;
+        if (healthScore < 0) healthScore = 0;
+        if (filesAnalyzed == 0) healthScore = 0; // Unknown health if no analysis
+
+        // Estimate tech debt (1 bug = 1h, security = 3h, perf = 0.5h)
+        double hours = bugs * 1.0 + security * 3.0 + perf * 0.5;
+        String techDebt = hours > 0 ? String.format("%.1fh", hours) : "0h";
+
+        // Determine Sync Status
+        String syncStatus = "UNKNOWN";
+        if (project.getGithubRepoUrl() != null && project.getLastAnalyzedCommit() != null) {
+            String currentPos = gitService.getLatestCommitSha(projectId);
+            if (currentPos != null) {
+                syncStatus = currentPos.equals(project.getLastAnalyzedCommit()) ? "SYNCED" : "OUT_OF_SYNC";
+            }
+        }
+
+        return com.developerev.dto.ProjectStatsDto.builder()
+                .healthScore(healthScore)
+                .totalFilesAnalyzed(filesAnalyzed)
+                .totalBugs(bugs)
+                .totalSecurityIssues(security)
+                .totalPerformanceIssues(perf)
+                .techDebtEstimate(techDebt)
+                .syncStatus(syncStatus)
+                .build();
     }
 }
