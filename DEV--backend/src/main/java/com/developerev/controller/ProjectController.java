@@ -30,7 +30,7 @@ public class ProjectController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<String> deleteProject(@PathVariable Long id, Authentication authentication) {
+    public ResponseEntity<String> deleteProject(@PathVariable("id") Long id, Authentication authentication) {
         String username = authentication.getName();
         projectService.deleteProject(id, username);
         return ResponseEntity.ok("Project deleted successfully");
@@ -38,8 +38,8 @@ public class ProjectController {
 
     @PutMapping("/{id}/settings")
     public ResponseEntity<Project> updateProjectSettings(
-            @PathVariable Long id, 
-            @RequestBody Project updatedProject, 
+            @PathVariable("id") Long id,
+            @RequestBody Project updatedProject,
             Authentication authentication) {
         String username = authentication.getName();
         return ResponseEntity.ok(projectService.updateProjectSettings(id, username, updatedProject));
@@ -47,8 +47,8 @@ public class ProjectController {
 
     @PostMapping("/{id}/members")
     public ResponseEntity<String> addProjectMember(
-            @PathVariable Long id, 
-            @RequestBody com.developerev.dto.AddProjectMemberRequestDto request, 
+            @PathVariable("id") Long id,
+            @RequestBody com.developerev.dto.AddProjectMemberRequestDto request,
             Authentication authentication) {
         String username = authentication.getName();
         projectService.addProjectMember(id, username, request);
@@ -57,9 +57,10 @@ public class ProjectController {
 
     @GetMapping("/{id}/members")
     public ResponseEntity<List<String>> getProjectMembers(
-            @PathVariable Long id, 
+            @PathVariable("id") Long id,
             Authentication authentication) {
         String username = authentication.getName();
         return ResponseEntity.ok(projectService.getProjectMembers(id, username));
     }
 }
+
