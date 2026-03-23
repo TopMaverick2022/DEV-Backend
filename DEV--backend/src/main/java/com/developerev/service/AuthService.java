@@ -180,8 +180,8 @@ public class AuthService {
     }
 
     @Transactional
-    public AuthResponse refreshToken(RefreshTokenRequest request) {
-        RefreshToken refreshToken = refreshTokenRepository.findByToken(request.getToken())
+    public AuthResponse refreshToken(String token) {
+        RefreshToken refreshToken = refreshTokenRepository.findByToken(token)
                 .orElseThrow(() -> new InvalidVerificationTokenException("Invalid refresh token"));
 
         if (refreshToken.getExpiryDate().isBefore(LocalDateTime.now())) {
@@ -189,10 +189,13 @@ public class AuthService {
             throw new VerificationTokenExpiredException("Refresh token has expired. Please sign in again.");
         }
 
+        // Rotate: delete old, issue new
         User user = refreshToken.getUser();
+        refreshTokenRepository.delete(refreshToken);
+        String newRefreshToken = createRefreshToken(user).getToken();
         String accessToken = jwtUtil.generateToken(user.getUsername());
 
-        return new AuthResponse(accessToken, request.getToken());
+        return new AuthResponse(accessToken, newRefreshToken);
     }
 
     @Transactional
