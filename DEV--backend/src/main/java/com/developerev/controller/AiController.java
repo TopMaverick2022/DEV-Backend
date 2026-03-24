@@ -116,13 +116,14 @@ public class AiController {
     @PostMapping(value = "/code-review-zip", consumes = "multipart/form-data")
     public ResponseEntity<ProjectReviewResponseDto> reviewCode(
             @RequestParam("project") MultipartFile zipFile,
+            @RequestParam(value = "projectId", required = false) Long projectId,
             org.springframework.security.core.Authentication authentication) {
         if (zipFile.isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
         try {
             String username = authentication != null ? authentication.getName() : null;
-            ProjectReviewResponseDto result = codeReviewService.reviewProject(zipFile, username);
+            ProjectReviewResponseDto result = codeReviewService.reviewProject(zipFile, username, projectId);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();
@@ -138,7 +139,7 @@ public class AiController {
     @PostMapping("/analyze-workspace/{projectId}")
     public ResponseEntity<ProjectReviewResponseDto> analyzeWorkspace(
             @PathVariable Long projectId,
-            @RequestParam("projectName") String projectName) {
+            @RequestParam(value = "projectName", required = false, defaultValue = "Workspace") String projectName) {
         try {
             java.nio.file.Path workspaceDir = java.nio.file.Paths.get("workspaces", "project_" + projectId)
                     .toAbsolutePath().normalize();

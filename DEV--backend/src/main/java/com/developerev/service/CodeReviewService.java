@@ -63,12 +63,12 @@ public class CodeReviewService {
     // Public entry point
     // ─────────────────────────────────────────────────────────────────────────
 
-    public ProjectReviewResponseDto reviewProject(MultipartFile zipFile, String username) throws IOException {
+    public ProjectReviewResponseDto reviewProject(MultipartFile zipFile, String username, Long linkedProjectId) throws IOException {
 
         log.info("ZIP received: {} from user: {}", zipFile.getOriginalFilename(), username);
 
-        Long linkedProjectId = null;
-        if (username != null && !username.isBlank()) {
+        // Use provided projectId if given, otherwise auto-create one
+        if (linkedProjectId == null && username != null && !username.isBlank()) {
             try {
                 com.developerev.model.Project masterProject = new com.developerev.model.Project();
                 masterProject.setName(zipFile.getOriginalFilename());
@@ -79,6 +79,8 @@ public class CodeReviewService {
             } catch (Exception e) {
                 log.warn("Failed to create master Project for ZIP upload: {}", e.getMessage());
             }
+        } else if (linkedProjectId != null) {
+            log.info("Linking ZIP review to existing Project id={}", linkedProjectId);
         }
 
         // ── Stage 1: Persist AI project record ────────────────────────────

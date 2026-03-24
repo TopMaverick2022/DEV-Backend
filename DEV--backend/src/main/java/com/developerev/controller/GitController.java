@@ -60,7 +60,7 @@ public class GitController {
     @GetMapping("/files/{projectId}")
     public ResponseEntity<List<FileItemDto>> listFiles(
             @PathVariable Long projectId,
-            @RequestParam(value = "path", defaultValue = "") String relativePath) {
+            @RequestParam(value = "path", required = false, defaultValue = "") String relativePath) {
         try {
             File repoDir = gitService.getRepoDir(projectId);
             if (!repoDir.exists()) {
