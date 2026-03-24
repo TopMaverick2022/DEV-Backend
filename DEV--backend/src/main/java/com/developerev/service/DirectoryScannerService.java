@@ -25,16 +25,9 @@ public class DirectoryScannerService {
             "__pycache__", "dist", ".gradle", "vendor", ".venv", "venv",
             ".next", "out", "coverage", ".nyc_output", "bin", "obj");
 
-    /** File extensions that are binary/asset — cannot be code-reviewed. */
-    private static final Set<String> BINARY_EXTENSIONS = Set.of(
-            ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp", ".tiff",
-            ".zip", ".tar", ".gz", ".bz2", ".rar", ".7z",
-            ".jar", ".war", ".ear", ".class",
-            ".exe", ".dll", ".so", ".dylib", ".lib", ".a", ".o",
-            ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-            ".mp3", ".mp4", ".wav", ".avi", ".mov", ".mkv",
-            ".ttf", ".woff", ".woff2", ".eot", ".otf",
-            ".lock", ".DS_Store");
+    /** File extensions that are source code and should be reviewed. */
+    private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
+            ".java", ".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".sql", ".php", ".cs", ".html", ".css", ".cpp", ".c", ".h");
 
     /**
      * Walks the project directory and returns paths to all source files
@@ -50,7 +43,7 @@ public class DirectoryScannerService {
             List<Path> files = stream
                     .filter(Files::isRegularFile)
                     .filter(p -> !isInIgnoredDirectory(root, p))
-                    .filter(p -> !isBinary(p))
+                    .filter(this::isAllowedSourceFile)
                     .collect(Collectors.toList());
 
             log.info("Files found: {}", files.size());
@@ -69,12 +62,11 @@ public class DirectoryScannerService {
         return false;
     }
 
-    /** Returns true if the file has a binary/asset extension. */
-    private boolean isBinary(Path file) {
+    /** Returns true if the file has an allowed source code extension. */
+    private boolean isAllowedSourceFile(Path file) {
         String name = file.getFileName().toString().toLowerCase();
         int dot = name.lastIndexOf('.');
-        if (dot < 0)
-            return false;
-        return BINARY_EXTENSIONS.contains(name.substring(dot));
+        if (dot < 0) return false;
+        return ALLOWED_EXTENSIONS.contains(name.substring(dot));
     }
 }

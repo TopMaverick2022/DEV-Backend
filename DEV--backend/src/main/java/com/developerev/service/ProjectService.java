@@ -182,7 +182,11 @@ public class ProjectService {
         int bugs = 0, security = 0, perf = 0;
         int filesAnalyzed = 0;
 
-        com.developerev.model.CodeProject cp = codeProjectRepository.findTopByNameOrderByIdDesc(project.getName());
+        com.developerev.model.CodeProject cp = codeProjectRepository.findTopByLinkedProjectIdOrderByIdDesc(project.getId());
+        if (cp == null) {
+            // Fallback to name for legacy data
+            cp = codeProjectRepository.findTopByNameOrderByIdDesc(project.getName());
+        }
         if (cp != null) {
             List<com.developerev.model.CodeFile> files = codeFileRepository.findByProjectId(cp.getId());
             filesAnalyzed = files.size();

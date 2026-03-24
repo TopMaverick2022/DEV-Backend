@@ -67,4 +67,53 @@ public class AiPromptBuilder {
                 """
                 .formatted(language, filename, language, filename, language, content);
     }
+
+    /**
+     * Builds a batch review prompt for multiple source files.
+     */
+    public String buildBatchPrompt(java.util.List<String> filenames, java.util.List<String> languages, java.util.List<String> contents) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("""
+                You are a senior software architect and AI code reviewer.
+
+                Analyze the following batch of source code files.
+                Apply language-specific best practices for each file.
+
+                Rules:
+                - Do NOT modify the code
+                - Only report issues, suggestions, and insights
+                - Include line numbers wherever possible
+                - Return ONLY valid JSON — an ARRAY of objects. No markdown, no code fences, no extra text.
+
+                Required JSON format ([ ] array of objects):
+                [
+                  {
+                    "filename": "Example.java",
+                    "language": "Java",
+                    "issues": [
+                      { "line": 12, "type": "Bug|Security|Performance|CodeQuality", "message": "Description of the issue" }
+                    ],
+                    "suggestions": [
+                      { "line": 25, "message": "Suggestion for improvement" }
+                    ],
+                    "architectureInsights": [
+                      "High-level observation about structure, coupling, patterns, or design..."
+                    ]
+                  }
+                ]
+
+                Files to review:
+                """);
+
+        for (int i = 0; i < filenames.size(); i++) {
+            String filename = filenames.get(i);
+            String language = languages.get(i);
+            String content = contents.get(i);
+            prompt.append("\n--- File: ").append(filename).append(" ---\n");
+            prompt.append("Language: ").append(language).append("\n");
+            prompt.append("Code:\n```\n").append(content).append("\n```\n");
+        }
+
+        return prompt.toString();
+    }
 }

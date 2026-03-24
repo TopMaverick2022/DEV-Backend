@@ -12,7 +12,6 @@ import com.developerev.dto.SystemQueryResponseDto;
 import com.developerev.dto.KnowledgeRequestDto;
 import com.developerev.dto.KnowledgeResponseDto;
 import com.developerev.dto.CodeRequest;
-import com.developerev.dto.DebugRequest;
 import com.developerev.service.AntiGravityService;
 import com.developerev.service.CodeReviewService;
 import com.developerev.service.LogAnalysisService;
@@ -29,7 +28,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/ai")
+@RequestMapping("/api/ai")
 @RequiredArgsConstructor
 public class AiController {
 
@@ -114,14 +113,16 @@ public class AiController {
      *
      * Postman: Body → form-data → Key: "project", Type: File
      */
-    @PostMapping(value = "/code-review", consumes = "multipart/form-data")
+    @PostMapping(value = "/code-review-zip", consumes = "multipart/form-data")
     public ResponseEntity<ProjectReviewResponseDto> reviewCode(
-            @RequestParam("project") MultipartFile zipFile) {
+            @RequestParam("project") MultipartFile zipFile,
+            org.springframework.security.core.Authentication authentication) {
         if (zipFile.isEmpty()) {
             return ResponseEntity.badRequest().build();
         }
         try {
-            ProjectReviewResponseDto result = codeReviewService.reviewProject(zipFile);
+            String username = authentication != null ? authentication.getName() : null;
+            ProjectReviewResponseDto result = codeReviewService.reviewProject(zipFile, username);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();
@@ -144,8 +145,8 @@ public class AiController {
             if (!java.nio.file.Files.exists(workspaceDir)) {
                 return ResponseEntity.badRequest().build();
             }
-            ProjectReviewResponseDto result = codeReviewService.reviewWorkspace(workspaceDir, projectName);
-            
+            ProjectReviewResponseDto result = codeReviewService.reviewWorkspace(workspaceDir, projectName, projectId);
+
             // Save the last analyzed commit SHA
             String latestCommit = gitService.getLatestCommitSha(projectId);
             if (latestCommit != null) {
@@ -154,7 +155,7 @@ public class AiController {
                     projectRepository.save(p);
                 });
             }
-            
+
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.internalServerError().build();
@@ -201,14 +202,6 @@ public class AiController {
     // ─────────────────────────────────────────────────────────────────────────────
     // Individual AI Feature Endpoints
     // ─────────────────────────────────────────────────────────────────────────────
-
-    @PostMapping("/debug")
-    public ResponseEntity<?> debugError(@RequestBody DebugRequest request) {
-        AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
-        analysisRequest.setAnalysisType("debug");
-        analysisRequest.setErrorLog(request.getErrorLog());
-        return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
-    }
 
     @PostMapping(value = "/analyze-logs", consumes = "multipart/form-data")
     public ResponseEntity<?> analyzeLogs(@RequestParam("file") MultipartFile logFile) {

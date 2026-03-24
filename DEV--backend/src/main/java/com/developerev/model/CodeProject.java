@@ -34,6 +34,9 @@ public class CodeProject {
 
     private LocalDateTime uploadedAt;
 
+    /** ID of the actual org/user Project this analysis belongs to */
+    private Long linkedProjectId;
+
     @PrePersist
     public void prePersist() {
         this.uploadedAt = LocalDateTime.now();

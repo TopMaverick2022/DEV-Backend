@@ -13,4 +13,6 @@ public interface CodeProjectRepository extends JpaRepository<CodeProject, Long> 
     List<CodeProject> findByStatus(String status);
     
     CodeProject findTopByNameOrderByIdDesc(String name);
+
+    CodeProject findTopByLinkedProjectIdOrderByIdDesc(Long linkedProjectId);
 }
