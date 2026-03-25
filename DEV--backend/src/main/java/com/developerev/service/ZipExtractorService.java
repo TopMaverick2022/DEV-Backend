@@ -18,6 +18,46 @@ import java.util.zip.ZipInputStream;
 public class ZipExtractorService {
 
     /**
+     * Extracts the given ZIP multipart file into the specified destination directory.
+     *
+     * @param zipFile the uploaded ZIP file
+     * @param destination the target directory path
+     * @return path to the destination directory
+     * @throws IOException if extraction fails
+     */
+    public Path extractTo(MultipartFile zipFile, Path destination) throws IOException {
+        log.info("Extracting ZIP '{}' to dir: {}", zipFile.getOriginalFilename(), destination);
+        if (!Files.exists(destination)) {
+            Files.createDirectories(destination);
+        }
+
+        try (ZipInputStream zis = new ZipInputStream(zipFile.getInputStream())) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+
+                // Sanitize path to prevent zip-slip attacks
+                Path filePath = destination.resolve(entry.getName()).normalize();
+                if (!filePath.startsWith(destination)) {
+                    log.warn("Skipping malicious zip entry: {}", entry.getName());
+                    zis.closeEntry();
+                    continue;
+                }
+
+                if (entry.isDirectory()) {
+                    Files.createDirectories(filePath);
+                } else {
+                    Files.createDirectories(filePath.getParent());
+                    Files.copy(zis, filePath, StandardCopyOption.REPLACE_EXISTING);
+                }
+                zis.closeEntry();
+            }
+        }
+
+        log.info("ZIP extraction complete: {}", destination);
+        return destination;
+    }
+
+    /**
      * Extracts the given ZIP multipart file into a newly created temp directory.
      *
      * @param zipFile the uploaded ZIP file

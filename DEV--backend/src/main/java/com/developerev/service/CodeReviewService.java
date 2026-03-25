@@ -91,38 +91,20 @@ public class CodeReviewService {
                         .build());
         log.info("Created CodeProject id={} name={}", project.getId(), project.getName());
 
-        // ── Stage 2: Extract ZIP to temp directory ─────────────────────────
-        Path tempDir;
-        try {
-            tempDir = zipExtractorService.extractZip(zipFile);
-        } catch (IOException e) {
-            log.error("Failed to extract zip file", e);
-            throw e;
-        }
+        // ── Stage 2: Extract ZIP to workspace directly ────────────────────
+        Long targetId = linkedProjectId != null ? linkedProjectId : project.getId();
+        Path workspaceDir = java.nio.file.Paths.get("workspaces", "project_" + targetId).toAbsolutePath().normalize();
+        
+        zipExtractorService.extractTo(zipFile, workspaceDir);
 
-        List<FileReviewDto> fileReviews = new ArrayList<>();
-
-        try {
-            // ── Stage 3: Scan for all source files ─────────────────────────
-            List<Path> sourceFiles = directoryScannerService.scan(tempDir);
-            
-            // ── Stages 4-8: Process in Batches ─────────────────────────────
-            fileReviews = processFilesInBatches(sourceFiles, project, tempDir);
-
-        } finally {
-            // ── Stage 9: Always clean up temp directory ────────────────────
-            zipExtractorService.cleanup(tempDir);
-        }
-
-        log.info("Code review complete: {} files reviewed for project id={}",
-                fileReviews.size(), project.getId());
+        log.info("Code upload complete and stored in workspace: {}", workspaceDir);
 
         return ProjectReviewResponseDto.builder()
                 .projectId(project.getId())
                 .projectName(project.getName())
-                .totalFilesReviewed(fileReviews.size())
-                .fileReviews(fileReviews)
-                .status("DONE")
+                .totalFilesReviewed(0)
+                .fileReviews(new ArrayList<>())
+                .status("UPLOADED")
                 .build();
     }
 
