@@ -25,3 +25,6 @@ target/
 # virtual machine crash logs
 hs_err_pid*
 replay_pid*
+
+# AI code review workspaces
+DEV--backend/workspaces/
