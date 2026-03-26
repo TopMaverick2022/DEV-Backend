@@ -72,7 +72,7 @@ public class CodeReviewService {
             try {
                 com.developerev.model.Project masterProject = new com.developerev.model.Project();
                 masterProject.setName(zipFile.getOriginalFilename());
-                masterProject.setDescription("Auto-generated from ZIP Upload");
+                masterProject.setDescription("ZIP Upload");
                 com.developerev.model.Project savedMaster = projectService.createProject(username, masterProject);
                 linkedProjectId = savedMaster.getId();
                 log.info("Created master Project id={} for ZIP upload", linkedProjectId);
