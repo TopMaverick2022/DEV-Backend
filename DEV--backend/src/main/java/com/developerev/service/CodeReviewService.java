@@ -99,12 +99,23 @@ public class CodeReviewService {
 
         log.info("Code upload complete and stored in workspace: {}", workspaceDir);
 
+        // The analysis step was missing here. After extracting the zip, we need to
+        // scan the files and send them for AI review.
+        List<Path> sourceFiles = directoryScannerService.scan(workspaceDir);
+        List<FileReviewDto> fileReviews = processFilesInBatches(sourceFiles, project, workspaceDir);
+
+        log.info("ZIP code review complete: {} files reviewed for project id={}",
+                fileReviews.size(), project.getId());
+
         return ProjectReviewResponseDto.builder()
                 .projectId(project.getId())
                 .projectName(project.getName())
                 .totalFilesReviewed(0)
                 .fileReviews(new ArrayList<>())
                 .status("UPLOADED")
+                .totalFilesReviewed(fileReviews.size())
+                .fileReviews(fileReviews)
+                .status("DONE")
                 .build();
     }
 

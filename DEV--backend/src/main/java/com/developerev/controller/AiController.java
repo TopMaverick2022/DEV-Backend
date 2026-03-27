@@ -46,7 +46,7 @@ public class AiController {
      * Pre-condition: feature must have tasks (run /ai/project-plan first).
      */
     @PostMapping("/generate-sprints/{featureId}")
-    public ResponseEntity<List<SprintDetailDto>> generateSprints(@PathVariable Long featureId) {
+    public ResponseEntity<List<SprintDetailDto>> generateSprints(@PathVariable("featureId") Long featureId) {
         try {
             return ResponseEntity.ok(antiGravityService.generateSprints(featureId));
         } catch (RuntimeException e) {
@@ -59,7 +59,7 @@ public class AiController {
      * Pre-condition: feature must have tasks (run /ai/project-plan first).
      */
     @PostMapping("/detect-dependencies/{featureId}")
-    public ResponseEntity<List<TaskDependencyDto>> detectDependencies(@PathVariable Long featureId) {
+    public ResponseEntity<List<TaskDependencyDto>> detectDependencies(@PathVariable("featureId") Long featureId) {
         try {
             return ResponseEntity.ok(antiGravityService.detectDependencies(featureId));
         } catch (RuntimeException e) {
@@ -138,7 +138,7 @@ public class AiController {
      */
     @PostMapping("/analyze-workspace/{projectId}")
     public ResponseEntity<ProjectReviewResponseDto> analyzeWorkspace(
-            @PathVariable Long projectId,
+            @PathVariable("projectId") Long projectId,
             @RequestParam(value = "projectName", required = false, defaultValue = "Workspace") String projectName) {
         try {
             java.nio.file.Path workspaceDir = java.nio.file.Paths.get("workspaces", "project_" + projectId)

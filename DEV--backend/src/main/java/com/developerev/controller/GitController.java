@@ -59,7 +59,7 @@ public class GitController {
 
     @GetMapping("/files/{projectId}")
     public ResponseEntity<List<FileItemDto>> listFiles(
-            @PathVariable Long projectId,
+            @PathVariable("projectId") Long projectId,
             @RequestParam(value = "path", required = false, defaultValue = "") String relativePath) {
         try {
             File repoDir = gitService.getRepoDir(projectId);
@@ -99,7 +99,7 @@ public class GitController {
 
     @GetMapping("/files/{projectId}/content")
     public ResponseEntity<String> getFileContent(
-            @PathVariable Long projectId,
+            @PathVariable("projectId") Long projectId,
             @RequestParam("path") String relativePath) {
         try {
             File repoDir = gitService.getRepoDir(projectId);

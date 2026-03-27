@@ -15,7 +15,7 @@ public class ProjectHealthController {
     private final HealthService healthService;
 
     @GetMapping("/projects/{id}/health")
-    public ResponseEntity<?> getProjectHealth(@PathVariable Long id) {
+    public ResponseEntity<?> getProjectHealth(@PathVariable("id") Long id) {
         ProjectHealth health = healthService.calculateHealth(id);
         return ResponseEntity.ok(health);
     }

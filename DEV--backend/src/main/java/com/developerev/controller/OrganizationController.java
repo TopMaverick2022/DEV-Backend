@@ -28,7 +28,7 @@ public class OrganizationController {
 
     @PostMapping("/{orgId}/members")
     public ResponseEntity<String> addMember(
-            @PathVariable Long orgId,
+            @PathVariable("orgId") Long orgId,
             @RequestBody AddMemberRequestDto request,
             Authentication authentication) {
         String username = authentication.getName();
@@ -38,7 +38,7 @@ public class OrganizationController {
 
     @GetMapping("/{orgId}/members")
     public ResponseEntity<List<String>> getMembers(
-            @PathVariable Long orgId,
+            @PathVariable("orgId") Long orgId,
             Authentication authentication) {
         String username = authentication.getName();
         return ResponseEntity.ok(organizationService.getMembers(orgId, username));
