@@ -149,13 +149,14 @@ public class AiController {
             ProjectReviewResponseDto result = codeReviewService.reviewWorkspace(workspaceDir, projectName, projectId);
 
             // Save the last analyzed commit SHA
-            String latestCommit = gitService.getLatestCommitSha(projectId);
-            if (latestCommit != null) {
-                projectRepository.findById(projectId).ifPresent(p -> {
+            projectRepository.findById(projectId).ifPresent(p -> {
+                String latestCommit = gitService.getLatestCommitSha(
+                        p.getGithubRepoUrl() != null ? p.getGithubRepoUrl() : "", projectId);
+                if (latestCommit != null) {
                     p.setLastAnalyzedCommit(latestCommit);
                     projectRepository.save(p);
-                });
-            }
+                }
+            });
 
             return ResponseEntity.ok(result);
         } catch (Exception e) {

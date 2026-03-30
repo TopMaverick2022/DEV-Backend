@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -99,7 +100,7 @@ public class GitService {
     /**
      * Retrieves the current HEAD commit SHA of the local workspace.
      */
-    public String getLatestCommitSha(Long projectId) {
+    public String getLocalCommitSha(Long projectId) {
         File repoDir = getRepoDir(projectId);
         if (!repoDir.exists() || !new File(repoDir, ".git").exists()) {
             return null;
@@ -111,5 +112,49 @@ public class GitService {
             log.error("Failed to retrieve HEAD commit for project {}: {}", projectId, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Retrieves the latest commit SHA, preferring remote and falling back to local.
+     */
+    public String getLatestCommitSha(String repoUrl, Long projectId) {
+        // Try to get the remote SHA first for the most accurate status
+        try {
+            log.debug("Checking remote HEAD for {}", repoUrl);
+            // We don't hold tokens, so this is an unauthenticated request.
+            // It will work for public repos, but fail for private ones.
+            Map<String, org.eclipse.jgit.lib.Ref> refs = Git.lsRemoteRepository()
+                .setHeads(true)
+                .setRemote(repoUrl)
+                .callAsMap();
+            
+            // Find the ObjectId for the 'HEAD' ref, which points to the default branch
+            org.eclipse.jgit.lib.Ref headRef = refs.get("HEAD");
+            if (headRef != null && headRef.getObjectId() != null) {
+                // For some reason, ls-remote on a repo after a push can return a list where HEAD
+                // is present but its objectId is null. We must resolve it indirectly.
+                // We find the symbolic ref that HEAD points to (e.g., refs/heads/main)
+                // and then get the ObjectId from that concrete ref.
+                if (headRef.isSymbolic()) {
+                    org.eclipse.jgit.lib.Ref concreteRef = refs.get(headRef.getTarget().getName());
+                    if (concreteRef != null && concreteRef.getObjectId() != null) {
+                        log.info("Successfully resolved remote symbolic HEAD for {} to {}", repoUrl, concreteRef.getObjectId().getName());
+                        return concreteRef.getObjectId().getName();
+                    }
+                }
+                
+                // If not symbolic or the indirect lookup failed, try to use its ID directly
+                log.info("Successfully retrieved remote HEAD for {} as {}", repoUrl, headRef.getObjectId().getName());
+                return headRef.getObjectId().getName();
+            }
+
+            log.warn("Could not determine remote HEAD for {}. It may be a private repo or empty. Falling back to local.", repoUrl);
+
+        } catch (Exception e) {
+            log.warn("Failed to get remote commit for project {}: {}. Falling back to local.", projectId, e.getMessage());
+        }
+
+        // Fallback to local SHA if remote check fails
+        return getLocalCommitSha(projectId);
     }
 }

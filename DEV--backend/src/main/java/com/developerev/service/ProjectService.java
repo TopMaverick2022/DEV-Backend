@@ -211,10 +211,21 @@ public class ProjectService {
 
         // Determine Sync Status
         String syncStatus = "UNKNOWN";
-        if (project.getGithubRepoUrl() != null && project.getLastAnalyzedCommit() != null) {
-            String currentPos = gitService.getLatestCommitSha(projectId);
-            if (currentPos != null) {
-                syncStatus = currentPos.equals(project.getLastAnalyzedCommit()) ? "SYNCED" : "OUT_OF_SYNC";
+        if (project.getGithubRepoUrl() != null && !project.getGithubRepoUrl().isEmpty()) {
+            String remoteSha = gitService.getLatestCommitSha(project.getGithubRepoUrl(), projectId);
+            String localSha = gitService.getLocalCommitSha(projectId);
+            String analyzedSha = project.getLastAnalyzedCommit();
+
+            if (remoteSha == null) {
+                syncStatus = "UNKNOWN";
+            } else if (analyzedSha == null) {
+                // If it's never been analyzed, check if it's at least been pulled
+                syncStatus = (localSha != null && localSha.equalsIgnoreCase(remoteSha)) ? "NEEDS_ANALYSIS" : "NEEDS_PULL";
+            } else if (!analyzedSha.equalsIgnoreCase(remoteSha)) {
+                // If analyzed commit is NOT the remote HEAD, check if we've at least pulled the remote HEAD
+                syncStatus = (localSha != null && localSha.equalsIgnoreCase(remoteSha)) ? "NEEDS_ANALYSIS" : "NEEDS_PULL";
+            } else {
+                syncStatus = "SYNCED";
             }
         }
 
