@@ -6,6 +6,8 @@ import com.developerev.ai.exception.EmptyAiResponseException;
 import com.developerev.ai.exception.InvalidApiKeyException;
 import com.developerev.ai.exception.NetworkTimeoutException;
 import com.developerev.ai.exception.RateLimitExceededException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.channel.ChannelOption;
 import io.netty.handler.timeout.ReadTimeoutHandler;
 import io.netty.handler.timeout.WriteTimeoutHandler;
@@ -20,9 +22,11 @@ import reactor.netty.http.client.HttpClient;
 import reactor.util.retry.Retry;
 
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Low-level HTTP client for the Gemini Generative Language API.
@@ -52,6 +56,32 @@ public class GeminiClient {
     private String apiKey;
 
     private final WebClient webClient;
+    private final ObjectMapper tokenMapper = new ObjectMapper();
+
+    // ── Daily token tracking (resets at local server midnight) ────────────────
+    private final AtomicLong dailyTokenCount = new AtomicLong(0);
+    private volatile LocalDate countDate = LocalDate.now();
+
+    /** Estimated free-tier daily quota in tokens (Gemini 2.5 Flash: 1,000,000/day) */
+    public static final long DAILY_TOKEN_LIMIT = 1_000_000L;
+
+    private void checkAndResetIfNewDay() {
+        LocalDate today = LocalDate.now();
+        if (!today.equals(countDate)) {
+            log.info("New day detected – resetting daily token counter");
+            dailyTokenCount.set(0);
+            countDate = today;
+        }
+    }
+
+    public long getTokensUsedToday() {
+        checkAndResetIfNewDay();
+        return dailyTokenCount.get();
+    }
+
+    public long getDailyTokenLimit() {
+        return DAILY_TOKEN_LIMIT;
+    }
 
     public GeminiClient() {
         // ── Netty HttpClient with connect + read/write timeouts ───────────────
@@ -133,6 +163,19 @@ public class GeminiClient {
                 throw new EmptyAiResponseException(
                         "Gemini returned a null or empty response body for prompt (first 120 chars): "
                                 + prompt.substring(0, Math.min(prompt.length(), 120)));
+            }
+
+            // ── Parse and accumulate token usage ──────────────────────────────
+            try {
+                JsonNode root = tokenMapper.readTree(response);
+                long tokens = root.path("usageMetadata").path("totalTokenCount").asLong(0);
+                if (tokens > 0) {
+                    checkAndResetIfNewDay();
+                    dailyTokenCount.addAndGet(tokens);
+                    log.debug("[QUOTA] +{} tokens | daily total: {}", tokens, dailyTokenCount.get());
+                }
+            } catch (Exception e) {
+                log.trace("Could not parse usage metadata: {}", e.getMessage());
             }
 
             return response;

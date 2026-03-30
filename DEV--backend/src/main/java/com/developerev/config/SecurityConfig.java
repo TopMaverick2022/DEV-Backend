@@ -49,6 +49,8 @@ public class SecurityConfig {
                         .requestMatchers("/oauth2/**", "/login/oauth2/**").permitAll()
                         .requestMatchers("/login", "/error").permitAll()
                         .requestMatchers("/ai/**").permitAll()
+                        // SSE stream endpoint: authentication is via ?token= query param
+                        .requestMatchers("/api/ai/analyze-workspace/*/stream").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .formLogin(f -> f.disable())

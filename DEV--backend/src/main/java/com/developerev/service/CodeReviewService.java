@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Orchestrates the full AI code review pipeline:
@@ -102,7 +103,7 @@ public class CodeReviewService {
         // The analysis step was missing here. After extracting the zip, we need to
         // scan the files and send them for AI review.
         List<Path> sourceFiles = directoryScannerService.scan(workspaceDir);
-        List<FileReviewDto> fileReviews = processFilesInBatches(sourceFiles, project, workspaceDir);
+        List<FileReviewDto> fileReviews = processFilesInBatches(sourceFiles, project, workspaceDir, null);
 
         log.info("ZIP code review complete: {} files reviewed for project id={}",
                 fileReviews.size(), project.getId());
@@ -135,7 +136,7 @@ public class CodeReviewService {
 
         List<Path> sourceFiles = directoryScannerService.scan(workspaceDir);
         
-        List<FileReviewDto> fileReviews = processFilesInBatches(sourceFiles, project, workspaceDir);
+        List<FileReviewDto> fileReviews = processFilesInBatches(sourceFiles, project, workspaceDir, null);
 
         log.info("Workspace code review complete: {} files reviewed for project id={}",
                 fileReviews.size(), project.getId());
@@ -156,15 +157,21 @@ public class CodeReviewService {
     /**
      * Chunks files, extracts contents, creates CodeFile entities, calls Gemini once per batch,
      * and persists reviews, returning the combined FileReviewDto results.
+     *
+     * @param progressCallback optional SSE callback: receives "current/total:filename" events
      */
-    private List<FileReviewDto> processFilesInBatches(List<Path> sourceFiles, CodeProject project, Path rootDir) {
+    public List<FileReviewDto> processFilesInBatches(
+            List<Path> sourceFiles, CodeProject project, Path rootDir,
+            Consumer<String> progressCallback) {
         List<FileReviewDto> allReviews = new ArrayList<>();
         
-        // 1) Limit total files to prevent API quota exhaustion (Google Free Tier 15 RPM)
-        if (sourceFiles.size() > 15) {
-            log.warn("Project has {} files. Limiting analysis to first 15 files to prevent AI quota exhaustion.", sourceFiles.size());
-            sourceFiles = sourceFiles.subList(0, 15);
+        // 1) Cap at 50 files for free-tier Gemini (15 RPM) — prevents quota exhaustion
+        if (sourceFiles.size() > 50) {
+            log.warn("Project has {} files. Limiting analysis to first 50 files to protect free-tier quota.", sourceFiles.size());
+            sourceFiles = sourceFiles.subList(0, 50);
         }
+        int totalFiles = sourceFiles.size();
+        int processedFiles = 0;
 
         // 2) Process in chunks of 5
         for (int i = 0; i < sourceFiles.size(); i += 5) {
@@ -180,7 +187,16 @@ public class CodeReviewService {
                 String language = languageDetectionService.detectLanguage(file);
                 String filename = file.getFileName().toString();
                 String content = fileContentService.readFile(file);
-                if (content.isBlank()) continue;
+                if (content.isBlank()) {
+                    processedFiles++;
+                    continue;
+                }
+
+                // Emit per-file progress event
+                if (progressCallback != null) {
+                    processedFiles++;
+                    progressCallback.accept(processedFiles + "/" + totalFiles + ":" + filename);
+                }
 
                 CodeFile codeFile = codeFileRepository.save(
                         CodeFile.builder()
@@ -198,7 +214,8 @@ public class CodeReviewService {
             if (filenames.isEmpty()) continue;
 
             // 3) Call AI for this batch
-            log.info("Sending batch of {} files to AI", filenames.size());
+            log.info("Sending batch of {} files to AI (batch {}/{})",
+                    filenames.size(), (i / 5) + 1, (int) Math.ceil(totalFiles / 5.0));
             String prompt = aiPromptBuilder.buildBatchPrompt(filenames, languages, contents);
             
             List<FileReviewDto> batchReviews = callAiBatchAndParse(prompt, filenames, languages, rootDir, batch);
@@ -212,6 +229,17 @@ public class CodeReviewService {
                 if (matchingCodeFile != null) {
                     persistReview(matchingCodeFile.getId(), review.getLanguage() != null ? review.getLanguage() : "Unknown", review);
                     allReviews.add(review);
+                }
+            }
+
+            // 5) Inter-batch delay: free-tier Gemini allows 15 RPM
+            //    2s gap between batches keeps us within safe limits
+            if (i + 5 < sourceFiles.size()) {
+                try {
+                    Thread.sleep(2000);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
                 }
             }
         }

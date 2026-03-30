@@ -42,6 +42,20 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
         }
 
+        // Fallback: also accept token as a query parameter (needed for SSE / EventSource
+        // which cannot set custom HTTP headers in the browser).
+        if (jwt == null) {
+            String queryToken = request.getParameter("token");
+            if (queryToken != null && !queryToken.isBlank()) {
+                jwt = queryToken;
+                try {
+                    username = jwtUtil.extractUsername(jwt);
+                } catch (Exception e) {
+                    // ignore
+                }
+            }
+        }
+
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             UserDetails userDetails = this.customUserDetailsService.loadUserByUsername(username);
 

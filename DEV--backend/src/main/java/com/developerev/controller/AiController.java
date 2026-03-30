@@ -40,6 +40,19 @@ public class AiController {
     private final ObjectMapper objectMapper;
     private final com.developerev.service.GitService gitService;
     private final com.developerev.repository.ProjectRepository projectRepository;
+    private final com.developerev.service.GeminiClient geminiClient;
+
+    /**
+     * GET /api/ai/quota
+     * Returns today's Gemini API token usage and the estimated daily limit.
+     */
+    @GetMapping("/quota")
+    public org.springframework.http.ResponseEntity<java.util.Map<String, Object>> getQuotaUsage() {
+        java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("tokensUsedToday", geminiClient.getTokensUsedToday());
+        result.put("dailyTokenLimit", geminiClient.getDailyTokenLimit());
+        return org.springframework.http.ResponseEntity.ok(result);
+    }
 
     /**
      * POST /ai/generate-sprints/{featureId}

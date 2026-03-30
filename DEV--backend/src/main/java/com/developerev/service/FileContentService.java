@@ -17,7 +17,7 @@ import java.nio.file.Path;
 public class FileContentService {
 
     /** Maximum characters read per file — keeps AI token usage manageable. */
-    private static final int MAX_FILE_CHARS = 4000;
+    private static final int MAX_FILE_CHARS = 6000;
 
     /**
      * Reads the content of the given file as a UTF-8 string.
