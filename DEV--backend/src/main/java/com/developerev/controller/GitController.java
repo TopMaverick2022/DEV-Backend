@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/git")
@@ -18,6 +19,17 @@ import java.util.List;
 public class GitController {
 
     private final GitService gitService;
+
+    @GetMapping("/commits/{projectId}/activity")
+    public ResponseEntity<List<Map<String, Object>>> getCommitActivity(@PathVariable("projectId") Long projectId) {
+        try {
+            List<Map<String, Object>> activity = gitService.getCommitActivity(projectId);
+            return ResponseEntity.ok(activity);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
 
     @PostMapping("/sync")
     public ResponseEntity<String> syncRepository(

@@ -3,6 +3,7 @@ package com.developerev.service;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileSystemUtils;
@@ -12,7 +13,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Map;
+import java.text.SimpleDateFormat;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -156,5 +158,42 @@ public class GitService {
 
         // Fallback to local SHA if remote check fails
         return getLocalCommitSha(projectId);
+    }
+
+    /**
+     * Retrieves commit activity grouped by date for the local workspace.
+     */
+    public List<Map<String, Object>> getCommitActivity(Long projectId) {
+        File repoDir = getRepoDir(projectId);
+        if (!repoDir.exists() || !new File(repoDir, ".git").exists()) {
+            return Collections.emptyList();
+        }
+
+        Map<String, Integer> commitCounts = new HashMap<>();
+        try (Git git = Git.open(repoDir)) {
+            Iterable<RevCommit> commits = git.log().all().call();
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+            for (RevCommit commit : commits) {
+                Date commitDate = new Date(commit.getCommitTime() * 1000L);
+                String dateStr = sdf.format(commitDate);
+                commitCounts.put(dateStr, commitCounts.getOrDefault(dateStr, 0) + 1);
+            }
+        } catch (Exception e) {
+            log.error("Failed to retrieve commit activity for project {}: {}", projectId, e.getMessage());
+            return Collections.emptyList();
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map.Entry<String, Integer> entry : commitCounts.entrySet()) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("date", entry.getKey());
+            map.put("commits", entry.getValue());
+            result.add(map);
+        }
+
+        // Sort by date ascending
+        result.sort((a, b) -> ((String) a.get("date")).compareTo((String) b.get("date")));
+        
+        return result;
     }
 }
