@@ -15,10 +15,15 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import org.springframework.util.DigestUtils;
+import java.nio.charset.StandardCharsets;
+import com.fasterxml.jackson.core.type.TypeReference;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -100,23 +105,12 @@ public class CodeReviewService {
 
         log.info("Code upload complete and stored in workspace: {}", workspaceDir);
 
-        // The analysis step was missing here. After extracting the zip, we need to
-        // scan the files and send them for AI review.
-        List<Path> sourceFiles = directoryScannerService.scan(workspaceDir);
-        List<FileReviewDto> fileReviews = processFilesInBatches(sourceFiles, project, workspaceDir, null);
-
-        log.info("ZIP code review complete: {} files reviewed for project id={}",
-                fileReviews.size(), project.getId());
-
         return ProjectReviewResponseDto.builder()
                 .projectId(project.getId())
                 .projectName(project.getName())
                 .totalFilesReviewed(0)
                 .fileReviews(new ArrayList<>())
                 .status("UPLOADED")
-                .totalFilesReviewed(fileReviews.size())
-                .fileReviews(fileReviews)
-                .status("DONE")
                 .build();
     }
 
@@ -136,7 +130,7 @@ public class CodeReviewService {
 
         List<Path> sourceFiles = directoryScannerService.scan(workspaceDir);
         
-        List<FileReviewDto> fileReviews = processFilesInBatches(sourceFiles, project, workspaceDir, null);
+        List<FileReviewDto> fileReviews = processFilesInBatches(sourceFiles, project, workspaceDir, false, null);
 
         log.info("Workspace code review complete: {} files reviewed for project id={}",
                 fileReviews.size(), project.getId());
@@ -162,79 +156,163 @@ public class CodeReviewService {
      */
     public List<FileReviewDto> processFilesInBatches(
             List<Path> sourceFiles, CodeProject project, Path rootDir,
-            Consumer<String> progressCallback) {
+            boolean isIncremental, Consumer<String> progressCallback) {
         List<FileReviewDto> allReviews = new ArrayList<>();
         
-        // 1) Cap at 50 files for free-tier Gemini (15 RPM) — prevents quota exhaustion
-        if (sourceFiles.size() > 50) {
-            log.warn("Project has {} files. Limiting analysis to first 50 files to protect free-tier quota.", sourceFiles.size());
-            sourceFiles = sourceFiles.subList(0, 50);
+        // 1) Respect free-tier Gemini (15 RPM) — prevents quota exhaustion
+        if (!isIncremental && sourceFiles.size() > 100) {
+            log.warn("Project has {} files. Limiting initial analysis to first 100 files to protect free-tier quota.", sourceFiles.size());
+            sourceFiles = sourceFiles.subList(0, 100);
         }
         int totalFiles = sourceFiles.size();
         int processedFiles = 0;
 
-        // 2) Process in chunks of 5
-        for (int i = 0; i < sourceFiles.size(); i += 5) {
-            int end = Math.min(i + 5, sourceFiles.size());
-            List<Path> batch = sourceFiles.subList(i, end);
+        List<Path> pendingFiles = new ArrayList<>();
+        List<String> pendingFilenames = new ArrayList<>();
+        List<String> pendingLanguages = new ArrayList<>();
+        List<String> pendingContents = new ArrayList<>();
+        List<CodeFile> pendingCodeFiles = new ArrayList<>();
 
-            List<String> filenames = new ArrayList<>();
-            List<String> languages = new ArrayList<>();
-            List<String> contents = new ArrayList<>();
-            List<CodeFile> savedCodeFiles = new ArrayList<>();
-
-            for (Path file : batch) {
-                String language = languageDetectionService.detectLanguage(file);
-                String filename = file.getFileName().toString();
-                String content = fileContentService.readFile(file);
-                if (content.isBlank()) {
-                    processedFiles++;
-                    continue;
-                }
-
-                // Emit per-file progress event
+        for (Path file : sourceFiles) {
+            String language = languageDetectionService.detectLanguage(file);
+            String filename = file.getFileName().toString();
+            String relativePath = rootDir.relativize(file).toString().replace("\\", "/");
+            String content = fileContentService.readFile(file);
+            
+            if (content.isBlank()) {
+                processedFiles++;
                 if (progressCallback != null) {
-                    processedFiles++;
                     progressCallback.accept(processedFiles + "/" + totalFiles + ":" + filename);
                 }
+                continue;
+            }
 
+            String fileHash = DigestUtils.md5DigestAsHex(content.getBytes(StandardCharsets.UTF_8));
+            Optional<CodeFile> cachedFileOpt = codeFileRepository.findFirstByFileHash(fileHash);
+
+            if (cachedFileOpt.isPresent()) {
+                // CACHE HIT
+                CodeFile cachedFile = cachedFileOpt.get();
+                List<CodeReview> cachedReviews = codeReviewRepository.findByFileId(cachedFile.getId());
+                
                 CodeFile codeFile = codeFileRepository.save(
                         CodeFile.builder()
                                 .projectId(project.getId())
                                 .filename(filename)
-                                .path(rootDir.relativize(file).toString().replace("\\", "/"))
+                                .path(relativePath)
+                                .fileHash(fileHash)
+                                .language(language)
+                                .lineCount(content.split("\n").length)
                                 .build());
 
-                filenames.add(filename);
-                languages.add(language);
-                contents.add(content);
-                savedCodeFiles.add(codeFile);
-            }
+                if (!cachedReviews.isEmpty()) {
+                    CodeReview cachedReview = cachedReviews.get(0);
+                    codeReviewRepository.save(
+                        CodeReview.builder()
+                                .fileId(codeFile.getId())
+                                .language(language)
+                                .issues(cachedReview.getIssues())
+                                .suggestions(cachedReview.getSuggestions())
+                                .architectureInsights(cachedReview.getArchitectureInsights())
+                                .bugCount(cachedReview.getBugCount())
+                                .securityCount(cachedReview.getSecurityCount())
+                                .performanceCount(cachedReview.getPerformanceCount())
+                                .build());
 
-            if (filenames.isEmpty()) continue;
-
-            // 3) Call AI for this batch
-            log.info("Sending batch of {} files to AI (batch {}/{})",
-                    filenames.size(), (i / 5) + 1, (int) Math.ceil(totalFiles / 5.0));
-            String prompt = aiPromptBuilder.buildBatchPrompt(filenames, languages, contents);
-            
-            List<FileReviewDto> batchReviews = callAiBatchAndParse(prompt, filenames, languages, rootDir, batch);
-            
-            // 4) Persist each review matched by filename
-            for (FileReviewDto review : batchReviews) {
-                CodeFile matchingCodeFile = savedCodeFiles.stream()
-                        .filter(cf -> cf.getFilename().equals(review.getFilename()))
-                        .findFirst().orElse(null);
+                    FileReviewDto dto = new FileReviewDto();
+                    dto.setFilename(filename);
+                    dto.setPath(relativePath);
+                    dto.setLanguage(language);
+                    try {
+                        if (cachedReview.getIssues() != null && !cachedReview.getIssues().equals("[]")) {
+                            dto.setIssues(objectMapper.readValue(cachedReview.getIssues(), new TypeReference<List<FileReviewDto.IssueDto>>(){}));
+                        } else dto.setIssues(new ArrayList<>());
                         
-                if (matchingCodeFile != null) {
-                    persistReview(matchingCodeFile.getId(), review.getLanguage() != null ? review.getLanguage() : "Unknown", review);
-                    allReviews.add(review);
+                        if (cachedReview.getSuggestions() != null && !cachedReview.getSuggestions().equals("[]")) {
+                            dto.setSuggestions(objectMapper.readValue(cachedReview.getSuggestions(), new TypeReference<List<FileReviewDto.SuggestionDto>>(){}));
+                        } else dto.setSuggestions(new ArrayList<>());
+                        
+                        if (cachedReview.getArchitectureInsights() != null && !cachedReview.getArchitectureInsights().equals("[]")) {
+                            dto.setArchitectureInsights(objectMapper.readValue(cachedReview.getArchitectureInsights(), new TypeReference<List<String>>(){}));
+                        } else dto.setArchitectureInsights(new ArrayList<>());
+                    } catch (Exception e) {
+                        log.warn("Failed to parse cached review: {}", e.getMessage());
+                        dto.setIssues(new ArrayList<>());
+                        dto.setSuggestions(new ArrayList<>());
+                        dto.setArchitectureInsights(new ArrayList<>());
+                    }
+                    allReviews.add(dto);
+                    log.info("CACHE HIT: Reusing analysis for file: {}", filename);
+                }
+                
+                processedFiles++;
+                if (progressCallback != null) {
+                    progressCallback.accept(processedFiles + "/" + totalFiles + ":" + filename);
+                }
+            } else {
+                // CACHE MISS
+                CodeFile codeFile = codeFileRepository.save(
+                        CodeFile.builder()
+                                .projectId(project.getId())
+                                .filename(filename)
+                                .path(relativePath)
+                                .fileHash(fileHash)
+                                .language(language)
+                                .lineCount(content.split("\n").length)
+                                .build());
+
+                pendingFiles.add(file);
+                pendingFilenames.add(filename);
+                pendingLanguages.add(language);
+                pendingContents.add(content);
+                pendingCodeFiles.add(codeFile);
+            }
+        }
+
+        // Process pending files in chunks of 5
+        int totalPending = pendingFiles.size();
+
+        for (int i = 0; i < totalPending; i += 5) {
+            int end = Math.min(i + 5, totalPending);
+            
+            List<Path> batchPaths = pendingFiles.subList(i, end);
+            List<String> filenames = pendingFilenames.subList(i, end);
+            List<String> languages = pendingLanguages.subList(i, end);
+            List<String> contents = pendingContents.subList(i, end);
+            List<CodeFile> savedCodeFiles = pendingCodeFiles.subList(i, end);
+
+            for (String fn : filenames) {
+                processedFiles++;
+                if (progressCallback != null) {
+                    progressCallback.accept(processedFiles + "/" + totalFiles + ":" + fn);
                 }
             }
 
-            // 5) Inter-batch delay: free-tier Gemini allows 15 RPM
-            //    2s gap between batches keeps us within safe limits
-            if (i + 5 < sourceFiles.size()) {
+            log.info("Sending batch of {} files to AI (batch {}/{})",
+                    filenames.size(), (i / 5) + 1, (int) Math.ceil(totalPending / 5.0));
+            String prompt = aiPromptBuilder.buildBatchPrompt(filenames, languages, contents);
+
+            try {
+                List<FileReviewDto> batchReviews = callAiBatchAndParse(prompt, filenames, languages, rootDir, batchPaths);
+                
+                for (FileReviewDto review : batchReviews) {
+                    CodeFile matchingCodeFile = savedCodeFiles.stream()
+                            .filter(cf -> cf.getFilename().equals(review.getFilename()))
+                            .findFirst().orElse(null);
+                            
+                    if (matchingCodeFile != null) {
+                        persistReview(matchingCodeFile.getId(), review.getLanguage() != null ? review.getLanguage() : "Unknown", review);
+                        allReviews.add(review);
+                    }
+                }
+            } catch (com.developerev.ai.exception.GeminiApiException e) {
+                log.error("Critical AI API failure during batch: {}", e.getMessage());
+                throw e;
+            } catch (Exception e) {
+                log.warn("Non-critical batch processing failure: {}", e.getMessage());
+            }
+
+            if (i + 5 < totalPending) {
                 try {
                     Thread.sleep(2000);
                 } catch (InterruptedException ie) {
@@ -279,8 +357,11 @@ public class CodeReviewService {
             }
             return dtos;
 
+        } catch (com.developerev.ai.exception.GeminiApiException e) {
+            // Rethrow Gemini API exceptions (429, 500, etc.)
+            throw e;
         } catch (Exception e) {
-            log.warn("AI batch review failed: {}", e.getMessage());
+            log.warn("AI batch review parsing failed: {}", e.getMessage());
             // Return empty reviews for all files in this batch so they aren't totally lost
             List<FileReviewDto> fallbacks = new ArrayList<>();
             for (int i = 0; i < filenames.size(); i++) {

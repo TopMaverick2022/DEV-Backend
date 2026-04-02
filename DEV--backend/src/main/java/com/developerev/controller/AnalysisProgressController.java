@@ -18,6 +18,7 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 /**
  * Streams real-time analysis progress to the frontend via Server-Sent Events (SSE).
@@ -62,17 +63,44 @@ public class AnalysisProgressController {
                     return;
                 }
 
-                // Scan to get total file count for progress context
+                // 1) Scan to get total file list
                 List<java.nio.file.Path> allFiles = directoryScannerService.scan(workspaceDir);
-                int capped = Math.min(allFiles.size(), 50);
+                
+                // 2) Smart Filter: Only analyze changed files if we have a baseline commit
+                var masterProject = projectRepository.findById(projectId).orElse(null);
+                boolean isIncremental = false;
+                
+                if (masterProject != null && masterProject.getLastAnalyzedCommit() != null) {
+                    String currentSha = gitService.getLocalCommitSha(projectId);
+                    if (currentSha != null && !currentSha.equals(masterProject.getLastAnalyzedCommit())) {
+                        List<String> changedPaths = gitService.getChangedFiles(projectId, masterProject.getLastAnalyzedCommit(), currentSha);
+                        if (!changedPaths.isEmpty()) {
+                            allFiles = allFiles.stream()
+                                    .filter(p -> {
+                                        String rel = workspaceDir.relativize(p).toString().replace("\\", "/");
+                                        return changedPaths.contains(rel);
+                                    })
+                                    .toList();
+                            isIncremental = true;
+                            log.info("Incremental analysis: processing {} changed files for project {}", allFiles.size(), projectId);
+                        } else {
+                            // No changes between commits
+                            emitter.send(SseEmitter.event().data("{\"current\":0,\"total\":0,\"filename\":\"No new changes to analyze.\"}"));
+                            emitter.send(SseEmitter.event().data("COMPLETE"));
+                            emitter.complete();
+                            return;
+                        }
+                    }
+                }
 
                 emitter.send(SseEmitter.event().data(
-                        "{\"current\":0,\"total\":" + capped + ",\"filename\":\"Starting analysis...\"}"));
+                        "{\"current\":0,\"total\":" + allFiles.size() + ",\"filename\":\"" + 
+                        (isIncremental ? "Analyzing recent changes..." : "Starting full analysis...") + "\"}"));
 
                 // Create a CodeProject entity
                 CodeProject project = codeProjectRepository.save(
                         CodeProject.builder()
-                                .name(projectName)
+                                .name(projectName + (isIncremental ? " (Incremental)" : ""))
                                 .linkedProjectId(projectId)
                                 .build());
 
@@ -81,6 +109,7 @@ public class AnalysisProgressController {
                         allFiles,
                         project,
                         workspaceDir,
+                        isIncremental,
                         progressEvent -> {
                             try {
                                 // progressEvent format: "current/total:filename"
@@ -99,14 +128,14 @@ public class AnalysisProgressController {
                         });
 
                 // Save last analyzed commit SHA
-                projectRepository.findById(projectId).ifPresent(p -> {
+                if (masterProject != null) {
                     String latestCommit = gitService.getLatestCommitSha(
-                            p.getGithubRepoUrl() != null ? p.getGithubRepoUrl() : "", projectId);
+                            masterProject.getGithubRepoUrl() != null ? masterProject.getGithubRepoUrl() : "", projectId);
                     if (latestCommit != null) {
-                        p.setLastAnalyzedCommit(latestCommit);
-                        projectRepository.save(p);
+                        masterProject.setLastAnalyzedCommit(latestCommit);
+                        projectRepository.save(masterProject);
                     }
-                });
+                }
 
                 emitter.send(SseEmitter.event().data("COMPLETE"));
                 emitter.complete();

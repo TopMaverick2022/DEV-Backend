@@ -58,31 +58,6 @@ public class GeminiClient {
     private final WebClient webClient;
     private final ObjectMapper tokenMapper = new ObjectMapper();
 
-    // ── Daily token tracking (resets at local server midnight) ────────────────
-    private final AtomicLong dailyTokenCount = new AtomicLong(0);
-    private volatile LocalDate countDate = LocalDate.now();
-
-    /** Estimated free-tier daily quota in tokens (Gemini 2.5 Flash: 1,000,000/day) */
-    public static final long DAILY_TOKEN_LIMIT = 1_000_000L;
-
-    private void checkAndResetIfNewDay() {
-        LocalDate today = LocalDate.now();
-        if (!today.equals(countDate)) {
-            log.info("New day detected – resetting daily token counter");
-            dailyTokenCount.set(0);
-            countDate = today;
-        }
-    }
-
-    public long getTokensUsedToday() {
-        checkAndResetIfNewDay();
-        return dailyTokenCount.get();
-    }
-
-    public long getDailyTokenLimit() {
-        return DAILY_TOKEN_LIMIT;
-    }
-
     public GeminiClient() {
         // ── Netty HttpClient with connect + read/write timeouts ───────────────
         HttpClient httpClient = HttpClient.create()
@@ -165,14 +140,15 @@ public class GeminiClient {
                                 + prompt.substring(0, Math.min(prompt.length(), 120)));
             }
 
-            // ── Parse and accumulate token usage ──────────────────────────────
+            // ── Parse usage metadata for logging ──────────────────────────────
             try {
                 JsonNode root = tokenMapper.readTree(response);
                 long tokens = root.path("usageMetadata").path("totalTokenCount").asLong(0);
                 if (tokens > 0) {
-                    checkAndResetIfNewDay();
-                    dailyTokenCount.addAndGet(tokens);
-                    log.debug("[QUOTA] +{} tokens | daily total: {}", tokens, dailyTokenCount.get());
+                    log.debug("[AI_USAGE] Prompt tokens: {}, Response tokens: {}, Total: {}", 
+                            root.path("usageMetadata").path("promptTokenCount").asLong(0),
+                            root.path("usageMetadata").path("candidatesTokenCount").asLong(0),
+                            tokens);
                 }
             } catch (Exception e) {
                 log.trace("Could not parse usage metadata: {}", e.getMessage());

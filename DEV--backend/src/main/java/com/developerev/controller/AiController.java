@@ -42,17 +42,6 @@ public class AiController {
     private final com.developerev.repository.ProjectRepository projectRepository;
     private final com.developerev.service.GeminiClient geminiClient;
 
-    /**
-     * GET /api/ai/quota
-     * Returns today's Gemini API token usage and the estimated daily limit.
-     */
-    @GetMapping("/quota")
-    public org.springframework.http.ResponseEntity<java.util.Map<String, Object>> getQuotaUsage() {
-        java.util.Map<String, Object> result = new java.util.LinkedHashMap<>();
-        result.put("tokensUsedToday", geminiClient.getTokensUsedToday());
-        result.put("dailyTokenLimit", geminiClient.getDailyTokenLimit());
-        return org.springframework.http.ResponseEntity.ok(result);
-    }
 
     /**
      * POST /ai/generate-sprints/{featureId}
@@ -60,11 +49,7 @@ public class AiController {
      */
     @PostMapping("/generate-sprints/{featureId}")
     public ResponseEntity<List<SprintDetailDto>> generateSprints(@PathVariable("featureId") Long featureId) {
-        try {
-            return ResponseEntity.ok(antiGravityService.generateSprints(featureId));
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(antiGravityService.generateSprints(featureId));
     }
 
     /**
@@ -73,11 +58,7 @@ public class AiController {
      */
     @PostMapping("/detect-dependencies/{featureId}")
     public ResponseEntity<List<TaskDependencyDto>> detectDependencies(@PathVariable("featureId") Long featureId) {
-        try {
-            return ResponseEntity.ok(antiGravityService.detectDependencies(featureId));
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(antiGravityService.detectDependencies(featureId));
     }
 
     /**
@@ -89,13 +70,9 @@ public class AiController {
             @RequestBody Map<String, String> body) {
         String idea = body.get("idea");
         if (idea == null || idea.isBlank()) {
-            return ResponseEntity.badRequest().build();
+            throw new IllegalArgumentException("Idea description is required");
         }
-        try {
-            return ResponseEntity.ok(antiGravityService.generateArchitecture(idea));
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(antiGravityService.generateArchitecture(idea));
     }
 
     /**
@@ -107,13 +84,9 @@ public class AiController {
             @RequestBody DatabaseIntelligenceRequestDto body) {
         String idea = body.getFeatureDescription();
         if (idea == null || idea.isBlank()) {
-            return ResponseEntity.badRequest().build();
+            throw new IllegalArgumentException("Feature description is required");
         }
-        try {
-            return ResponseEntity.ok(antiGravityService.generateDatabaseSchema(idea));
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().build();
-        }
+        return ResponseEntity.ok(antiGravityService.generateDatabaseSchema(idea));
     }
 
     /**
@@ -130,17 +103,13 @@ public class AiController {
     public ResponseEntity<ProjectReviewResponseDto> reviewCode(
             @RequestParam("project") MultipartFile zipFile,
             @RequestParam(value = "projectId", required = false) Long projectId,
-            org.springframework.security.core.Authentication authentication) {
+            org.springframework.security.core.Authentication authentication) throws Exception {
         if (zipFile.isEmpty()) {
-            return ResponseEntity.badRequest().build();
+            throw new IllegalArgumentException("Project zip file is empty");
         }
-        try {
-            String username = authentication != null ? authentication.getName() : null;
-            ProjectReviewResponseDto result = codeReviewService.reviewProject(zipFile, username, projectId);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
-        }
+        String username = authentication != null ? authentication.getName() : null;
+        ProjectReviewResponseDto result = codeReviewService.reviewProject(zipFile, username, projectId);
+        return ResponseEntity.ok(result);
     }
 
     /**
@@ -152,29 +121,25 @@ public class AiController {
     @PostMapping("/analyze-workspace/{projectId}")
     public ResponseEntity<ProjectReviewResponseDto> analyzeWorkspace(
             @PathVariable("projectId") Long projectId,
-            @RequestParam(value = "projectName", required = false, defaultValue = "Workspace") String projectName) {
-        try {
-            java.nio.file.Path workspaceDir = java.nio.file.Paths.get("workspaces", "project_" + projectId)
-                    .toAbsolutePath().normalize();
-            if (!java.nio.file.Files.exists(workspaceDir)) {
-                return ResponseEntity.badRequest().build();
-            }
-            ProjectReviewResponseDto result = codeReviewService.reviewWorkspace(workspaceDir, projectName, projectId);
-
-            // Save the last analyzed commit SHA
-            projectRepository.findById(projectId).ifPresent(p -> {
-                String latestCommit = gitService.getLatestCommitSha(
-                        p.getGithubRepoUrl() != null ? p.getGithubRepoUrl() : "", projectId);
-                if (latestCommit != null) {
-                    p.setLastAnalyzedCommit(latestCommit);
-                    projectRepository.save(p);
-                }
-            });
-
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
+            @RequestParam(value = "projectName", required = false, defaultValue = "Workspace") String projectName) throws Exception {
+        java.nio.file.Path workspaceDir = java.nio.file.Paths.get("workspaces", "project_" + projectId)
+                .toAbsolutePath().normalize();
+        if (!java.nio.file.Files.exists(workspaceDir)) {
+            throw new jakarta.persistence.EntityNotFoundException("Workspace not found for project " + projectId);
         }
+        ProjectReviewResponseDto result = codeReviewService.reviewWorkspace(workspaceDir, projectName, projectId);
+
+        // Save the last analyzed commit SHA
+        projectRepository.findById(projectId).ifPresent(p -> {
+            String latestCommit = gitService.getLatestCommitSha(
+                    p.getGithubRepoUrl() != null ? p.getGithubRepoUrl() : "", projectId);
+            if (latestCommit != null) {
+                p.setLastAnalyzedCommit(latestCommit);
+                projectRepository.save(p);
+            }
+        });
+
+        return ResponseEntity.ok(result);
     }
 
     /**
@@ -184,33 +149,27 @@ public class AiController {
      * Supports either a single JSON object or a JSON array of objects.
      */
     @PostMapping("/analyze")
-    public ResponseEntity<?> analyzeCode(@RequestBody JsonNode requestNode) {
-        try {
-            if (requestNode.isArray()) {
-                // Return a list of responses
-                List<String> results = new java.util.ArrayList<>();
-                for (JsonNode node : requestNode) {
-                    AiAnalysisRequest request = objectMapper.treeToValue(node, AiAnalysisRequest.class);
-                    if (request.getAnalysisType() == null || request.getAnalysisType().isBlank()) {
-                        request.setAnalysisType("all");
-                    }
-                    results.add(antiGravityService.analyzeCode(request));
-                }
-                return ResponseEntity.ok(results);
-            } else if (requestNode.isObject()) {
-                // Return a single response string to maintain backward capability
-                AiAnalysisRequest request = objectMapper.treeToValue(requestNode, AiAnalysisRequest.class);
+    public ResponseEntity<?> analyzeCode(@RequestBody JsonNode requestNode) throws Exception {
+        if (requestNode.isArray()) {
+            // Return a list of responses
+            List<String> results = new java.util.ArrayList<>();
+            for (JsonNode node : requestNode) {
+                AiAnalysisRequest request = objectMapper.treeToValue(node, AiAnalysisRequest.class);
                 if (request.getAnalysisType() == null || request.getAnalysisType().isBlank()) {
                     request.setAnalysisType("all");
                 }
-                return ResponseEntity.ok(antiGravityService.analyzeCode(request));
-            } else {
-                return ResponseEntity.badRequest().body("Invalid JSON payload format");
+                results.add(antiGravityService.analyzeCode(request));
             }
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("Error during analysis: " + e.getMessage());
+            return ResponseEntity.ok(results);
+        } else if (requestNode.isObject()) {
+            // Return a single response string to maintain backward capability
+            AiAnalysisRequest request = objectMapper.treeToValue(requestNode, AiAnalysisRequest.class);
+            if (request.getAnalysisType() == null || request.getAnalysisType().isBlank()) {
+                request.setAnalysisType("all");
+            }
+            return ResponseEntity.ok(antiGravityService.analyzeCode(request));
+        } else {
+            throw new IllegalArgumentException("Invalid JSON payload format");
         }
     }
 
@@ -219,14 +178,8 @@ public class AiController {
     // ─────────────────────────────────────────────────────────────────────────────
 
     @PostMapping(value = "/analyze-logs", consumes = "multipart/form-data")
-    public ResponseEntity<?> analyzeLogs(@RequestParam("file") MultipartFile logFile) {
-        try {
-            return ResponseEntity.ok(logAnalysisService.analyzeLogFile(logFile));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("Error parsing log file: " + e.getMessage());
-        }
+    public ResponseEntity<?> analyzeLogs(@RequestParam("file") MultipartFile logFile) throws Exception {
+        return ResponseEntity.ok(logAnalysisService.analyzeLogFile(logFile));
     }
 
     @PostMapping("/refactor")
@@ -254,13 +207,9 @@ public class AiController {
     }
 
     @PostMapping(value = "/dependency-graph", consumes = "multipart/form-data")
-    public ResponseEntity<?> dependencyGraph(@RequestParam("file") MultipartFile zip) {
-        try {
-            String result = antiGravityService.generateDependencyGraph(zip);
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("Error generating dependency graph: " + e.getMessage());
-        }
+    public ResponseEntity<?> dependencyGraph(@RequestParam("file") MultipartFile zip) throws Exception {
+        String result = antiGravityService.generateDependencyGraph(zip);
+        return ResponseEntity.ok(result);
     }
 
     @PostMapping("/test-generator")
@@ -281,34 +230,22 @@ public class AiController {
 
     @PostMapping("/knowledge")
     public ResponseEntity<KnowledgeResponseDto> saveKnowledge(@RequestBody KnowledgeRequestDto request) {
-        try {
-            return ResponseEntity.ok(knowledgeService.saveKnowledge(request));
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
-        }
+        return ResponseEntity.ok(knowledgeService.saveKnowledge(request));
     }
 
     @GetMapping("/knowledge")
     public ResponseEntity<KnowledgeResponseDto> getKnowledge() {
-        try {
-            return ResponseEntity.ok(knowledgeService.getKnowledge());
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
-        }
+        return ResponseEntity.ok(knowledgeService.getKnowledge());
     }
 
     @PostMapping(value = "/system-query", consumes = "multipart/form-data")
     public ResponseEntity<SystemQueryResponseDto> answerSystemQuery(
             @RequestParam("project") MultipartFile zipFile,
-            @RequestParam("query") String query) {
+            @RequestParam("query") String query) throws Exception {
         if (zipFile.isEmpty() || query == null || query.isBlank()) {
-            return ResponseEntity.badRequest().build();
+            throw new IllegalArgumentException("Project zip file and query are required");
         }
-        try {
-            return ResponseEntity.ok(systemIntelligenceService.answerSystemQuery(zipFile, query));
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError().build();
-        }
+        return ResponseEntity.ok(systemIntelligenceService.answerSystemQuery(zipFile, query));
     }
 
 }

@@ -14,13 +14,21 @@ import com.developerev.ai.exception.UnsupportedLanguageException;
 import com.developerev.dto.ApiErrorResponse;
 import com.developerev.exception.auth.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import jakarta.persistence.EntityNotFoundException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -63,6 +71,21 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(UserNotFoundException.class)
     public ResponseEntity<ApiErrorResponse> handleUserNotFound(UserNotFoundException ex) {
         return createErrorResponse(HttpStatus.NOT_FOUND, "User Not Found", ex);
+    }
+
+    @ExceptionHandler(UsernameNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleUsernameNotFound(UsernameNotFoundException ex) {
+        return createErrorResponse(HttpStatus.NOT_FOUND, "Account Not Found", ex.getMessage());
+    }
+
+    @ExceptionHandler(BadCredentialsException.class)
+    public ResponseEntity<ApiErrorResponse> handleBadCredentials(BadCredentialsException ex) {
+        return createErrorResponse(HttpStatus.UNAUTHORIZED, "Invalid Credentials", "Incorrect username or password. Please try again.");
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiErrorResponse> handleAccessDenied(AccessDeniedException ex) {
+        return createErrorResponse(HttpStatus.FORBIDDEN, "Access Denied", "You do not have permission to perform this action.");
     }
 
 
@@ -167,6 +190,35 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(body);
     }
 
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiErrorResponse> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        String msg = "Database constraint violation. Please ensure all data is unique and valid.";
+        if (ex.getMessage() != null && ex.getMessage().contains("Duplicate entry")) {
+            msg = "This record already exists in our system.";
+        }
+        return createErrorResponse(HttpStatus.CONFLICT, "Database Error", msg);
+    }
+
+    @ExceptionHandler(EntityNotFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleEntityNotFound(EntityNotFoundException ex) {
+        return createErrorResponse(HttpStatus.NOT_FOUND, "Resource Not Found", "The requested item could not be found.");
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiErrorResponse> handleMissingParams(MissingServletRequestParameterException ex) {
+        return createErrorResponse(HttpStatus.BAD_REQUEST, "Missing Parameter", "Required parameter '" + ex.getParameterName() + "' is missing.");
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        return createErrorResponse(HttpStatus.BAD_REQUEST, "Invalid Format", "Invalid value format for parameter '" + ex.getName() + "'.");
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiErrorResponse> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
+        return createErrorResponse(HttpStatus.METHOD_NOT_ALLOWED, "Method Not Allowed", "The HTTP method '" + ex.getMethod() + "' is not supported for this endpoint.");
+    }
+
     /**
      * Catch-all handler for any {@link GeminiApiException} subclass not matched above,
      * and for any other unhandled {@link Exception}.
@@ -191,12 +243,16 @@ public class GlobalExceptionHandler {
     // ─── Helpers ───────────────────────────────────────────────────────────────
 
     private ResponseEntity<ApiErrorResponse> createErrorResponse(HttpStatus status, String error, RuntimeException ex) {
-        log.warn("[AUTH_ERROR][{}] {}", error.toUpperCase().replace(' ', '_'), ex.getMessage());
+        return createErrorResponse(status, error, ex.getMessage());
+    }
+
+    private ResponseEntity<ApiErrorResponse> createErrorResponse(HttpStatus status, String error, String userMessage) {
+        log.warn("[CLIENT_ERROR][{}] {}", error.toUpperCase().replace(' ', '_'), userMessage);
         ApiErrorResponse body = ApiErrorResponse.builder()
                 .status(status.value())
                 .error(error)
-                .userMessage(ex.getMessage())
-                .debugMessage(ex.getClass().getSimpleName())
+                .userMessage(userMessage)
+                .debugMessage(status.getReasonPhrase())
                 .retryable(false)
                 .build();
         return ResponseEntity.status(status).body(body);

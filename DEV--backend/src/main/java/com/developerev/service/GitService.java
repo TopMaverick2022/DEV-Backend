@@ -5,6 +5,10 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.revwalk.RevCommit;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.ObjectReader;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileSystemUtils;
 
@@ -163,6 +167,62 @@ public class GitService {
     /**
      * Retrieves commit activity grouped by date for the local workspace.
      */
+    /**
+     * Identifies files that changed (added or modified) between two commits.
+     * This is used for incremental analysis of repositories.
+     *
+     * @param projectId project identifier
+     * @param oldCommit older commit SHA-1
+     * @param newCommit newer commit SHA-1
+     * @return List of relative file paths that changed
+     */
+    public List<String> getChangedFiles(Long projectId, String oldCommit, String newCommit) {
+        if (oldCommit == null || newCommit == null || oldCommit.equals(newCommit)) {
+            return Collections.emptyList();
+        }
+
+        File repoDir = getRepoDir(projectId);
+        if (!repoDir.exists() || !new File(repoDir, ".git").exists()) {
+            return Collections.emptyList();
+        }
+
+        List<String> changedFiles = new ArrayList<>();
+        try (Git git = Git.open(repoDir)) {
+            ObjectId oldHead = git.getRepository().resolve(oldCommit + "^{tree}");
+            ObjectId newHead = git.getRepository().resolve(newCommit + "^{tree}");
+
+            if (oldHead == null || newHead == null) {
+                log.warn("Could not resolve trees for diff: {} vs {}", oldCommit, newCommit);
+                return Collections.emptyList();
+            }
+
+            try (ObjectReader reader = git.getRepository().newObjectReader()) {
+                CanonicalTreeParser oldTreeIter = new CanonicalTreeParser();
+                oldTreeIter.reset(reader, oldHead);
+                CanonicalTreeParser newTreeIter = new CanonicalTreeParser();
+                newTreeIter.reset(reader, newHead);
+
+                List<DiffEntry> diffs = git.diff()
+                        .setNewTree(newTreeIter)
+                        .setOldTree(oldTreeIter)
+                        .call();
+
+                for (DiffEntry entry : diffs) {
+                    // We only care about ADD and MODIFY. DELETE is handled by the regular scanner
+                    // being absent, or we can optionally track it.
+                    if (entry.getChangeType() == DiffEntry.ChangeType.ADD || entry.getChangeType() == DiffEntry.ChangeType.MODIFY) {
+                        changedFiles.add(entry.getNewPath());
+                    }
+                }
+            }
+            log.info("Found {} changed files between {} and {} for project {}", changedFiles.size(), oldCommit, newCommit, projectId);
+        } catch (Exception e) {
+            log.error("Failed to calculate diff for project {}: {}", projectId, e.getMessage(), e);
+        }
+
+        return changedFiles;
+    }
+
     public List<Map<String, Object>> getCommitActivity(Long projectId) {
         File repoDir = getRepoDir(projectId);
         if (!repoDir.exists() || !new File(repoDir, ".git").exists()) {
