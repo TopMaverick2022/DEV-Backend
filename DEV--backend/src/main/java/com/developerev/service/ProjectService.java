@@ -239,4 +239,18 @@ public class ProjectService {
                 .syncStatus(syncStatus)
                 .build();
     }
+
+    /**
+     * Clears the lastAnalyzedCommit field for a project.
+     * Called after a ZIP upload so that the incremental analysis logic
+     * does not skip files in the newly uploaded workspace.
+     */
+    @Transactional
+    public void resetLastAnalyzedCommit(Long projectId) {
+        projectRepository.findById(projectId).ifPresent(p -> {
+            p.setLastAnalyzedCommit(null);
+            projectRepository.save(p);
+        });
+    }
 }
+

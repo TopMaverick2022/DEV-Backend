@@ -12,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -67,10 +68,15 @@ public class AnalysisProgressController {
                 List<java.nio.file.Path> allFiles = directoryScannerService.scan(workspaceDir);
                 
                 // 2) Smart Filter: Only analyze changed files if we have a baseline commit
+                //    AND the workspace is actually a real git repository (not a ZIP upload)
                 var masterProject = projectRepository.findById(projectId).orElse(null);
                 boolean isIncremental = false;
-                
-                if (masterProject != null && masterProject.getLastAnalyzedCommit() != null) {
+                File gitDir = new File(workspaceDir.toFile(), ".git");
+
+                if (masterProject != null
+                        && masterProject.getLastAnalyzedCommit() != null
+                        && gitDir.exists()  // Only apply incremental logic to real Git repos
+                ) {
                     String currentSha = gitService.getLocalCommitSha(projectId);
                     if (currentSha != null && !currentSha.equals(masterProject.getLastAnalyzedCommit())) {
                         List<String> changedPaths = gitService.getChangedFiles(projectId, masterProject.getLastAnalyzedCommit(), currentSha);
@@ -91,7 +97,13 @@ public class AnalysisProgressController {
                             return;
                         }
                     }
+                } else if (masterProject != null
+                        && masterProject.getLastAnalyzedCommit() != null
+                        && !gitDir.exists()) {
+                    // Workspace is from a ZIP upload — run a full analysis, ignore any stale commit SHA
+                    log.info("Workspace for project {} has no .git dir (ZIP upload). Performing full analysis.", projectId);
                 }
+
 
                 emitter.send(SseEmitter.event().data(
                         "{\"current\":0,\"total\":" + allFiles.size() + ",\"filename\":\"" + 
