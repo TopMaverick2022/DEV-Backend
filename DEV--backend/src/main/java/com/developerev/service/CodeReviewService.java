@@ -310,6 +310,11 @@ public class CodeReviewService {
         int totalPending = pendingFiles.size();
 
         for (int i = 0; i < totalPending; i += BATCH_SIZE) {
+            if (Thread.currentThread().isInterrupted()) {
+                log.info("Batch processing interrupted. Cancelling analysis.");
+                throw new RuntimeException("Analysis was cancelled by the user.");
+            }
+
             int end = Math.min(i + BATCH_SIZE, totalPending);
             
             List<Path> batchPaths = pendingFiles.subList(i, end);
@@ -358,7 +363,8 @@ public class CodeReviewService {
                     Thread.sleep(2000);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    break;
+                    log.info("Batch processing sleep interrupted. Cancelling analysis.");
+                    throw new RuntimeException("Analysis was cancelled by the user.", ie);
                 }
             }
         }

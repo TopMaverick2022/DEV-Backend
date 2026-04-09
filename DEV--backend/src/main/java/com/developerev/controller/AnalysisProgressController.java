@@ -44,6 +44,8 @@ public class AnalysisProgressController {
     private final GitService gitService;
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final java.util.concurrent.ConcurrentHashMap<Long, java.util.concurrent.Future<?>> activeTasks = new java.util.concurrent.ConcurrentHashMap<>();
+
 
     @GetMapping(value = "/analyze-workspace/{projectId}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamAnalysis(
@@ -53,7 +55,7 @@ public class AnalysisProgressController {
         // 10-minute timeout — large projects may take a while
         SseEmitter emitter = new SseEmitter(600_000L);
 
-        executor.submit(() -> {
+        java.util.concurrent.Future<?> future = executor.submit(() -> {
             try {
                 Path workspaceDir = Paths.get("workspaces", "project_" + projectId)
                         .toAbsolutePath().normalize();
@@ -153,16 +155,40 @@ public class AnalysisProgressController {
                 emitter.complete();
 
             } catch (Exception e) {
-                log.error("SSE analysis stream failed for project {}: {}", projectId, e.getMessage(), e);
-                try {
-                    emitter.send(SseEmitter.event().data("ERROR:" + e.getMessage()));
-                    emitter.complete();
-                } catch (Exception sendEx) {
-                    emitter.completeWithError(sendEx);
+                if (e instanceof InterruptedException || Thread.currentThread().isInterrupted()) {
+                    log.info("Analysis cancelled for project {}", projectId);
+                    try {
+                        emitter.send(SseEmitter.event().data("ERROR:Analysis was cancelled by the user."));
+                        emitter.complete();
+                    } catch (Exception sendEx) {
+                        // ignore
+                    }
+                } else {
+                    log.error("SSE analysis stream failed for project {}: {}", projectId, e.getMessage(), e);
+                    try {
+                        emitter.send(SseEmitter.event().data("ERROR:" + e.getMessage()));
+                        emitter.complete();
+                    } catch (Exception sendEx) {
+                        emitter.completeWithError(sendEx);
+                    }
                 }
+            } finally {
+                activeTasks.remove(projectId);
             }
         });
+        activeTasks.put(projectId, future);
 
         return emitter;
+    }
+
+    @PostMapping("/analyze-workspace/{projectId}/cancel")
+    public org.springframework.http.ResponseEntity<String> cancelAnalysis(@PathVariable("projectId") Long projectId) {
+        java.util.concurrent.Future<?> future = activeTasks.get(projectId);
+        if (future != null) {
+            future.cancel(true); // interrupts the running thread
+            activeTasks.remove(projectId);
+            return org.springframework.http.ResponseEntity.ok("Analysis cancelled successfully.");
+        }
+        return org.springframework.http.ResponseEntity.status(404).body("No active analysis found for this project.");
     }
 }
