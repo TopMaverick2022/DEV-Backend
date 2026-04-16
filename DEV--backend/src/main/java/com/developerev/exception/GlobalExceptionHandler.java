@@ -27,6 +27,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import reactor.core.Exceptions;
 
 import jakarta.persistence.EntityNotFoundException;
 import java.util.HashMap;
@@ -133,6 +134,49 @@ public class GlobalExceptionHandler {
         return response(HttpStatus.SERVICE_UNAVAILABLE, "AI Service Unavailable", ex);
     }
 
+    /**
+     * Handles reactor's RetryExhaustedException, which wraps the original typed exception
+     * after all retry attempts are exhausted (e.g., after 3x retries on a Gemini 503).
+     * Unwraps the root cause and re-routes to the appropriate specific handler.
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiErrorResponse> handleRetryExhausted(Exception ex) {
+        // Unwrap RetryExhaustedException to get the real cause
+        Throwable cause = ex;
+        if (Exceptions.isRetryExhausted(ex) && ex.getCause() != null) {
+            cause = ex.getCause();
+            log.warn("[AI_ERROR][RETRY_EXHAUSTED] All retries failed. Root cause: {}", cause.getMessage());
+        }
+
+        if (cause instanceof AiServiceUnavailableException e) {
+            return response(HttpStatus.SERVICE_UNAVAILABLE, "AI Service Unavailable (Retries Exhausted)", e);
+        }
+        if (cause instanceof RateLimitExceededException e) {
+            return response(HttpStatus.TOO_MANY_REQUESTS, "Rate Limit Exceeded", e);
+        }
+        if (cause instanceof DailyQuotaExceededException e) {
+            return response(HttpStatus.TOO_MANY_REQUESTS, "Daily Quota Exceeded", e);
+        }
+        if (cause instanceof NetworkTimeoutException e) {
+            return response(HttpStatus.GATEWAY_TIMEOUT, "Network Timeout", e);
+        }
+        if (cause instanceof GeminiApiException gae) {
+            log("[AI_ERROR][UNCLASSIFIED]", gae);
+            return response(HttpStatus.INTERNAL_SERVER_ERROR, "AI Error", gae);
+        }
+
+        // Truly unexpected — log fully
+        log.error("[SYSTEM_ERROR] Unhandled exception: {}", ex.getMessage(), ex);
+        ApiErrorResponse body = ApiErrorResponse.builder()
+                .status(HttpStatus.INTERNAL_SERVER_ERROR.value())
+                .error("Internal Server Error")
+                .userMessage("An unexpected system error occurred.")
+                .debugMessage(ex.getMessage())
+                .retryable(false)
+                .build();
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+    }
+
     // ── 504 Gateway Timeout ────────────────────────────────────────────────────
 
     @ExceptionHandler(NetworkTimeoutException.class)
@@ -220,24 +264,13 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Catch-all handler for any {@link GeminiApiException} subclass not matched above,
-     * and for any other unhandled {@link Exception}.
+     * Catch-all handler for any {@link GeminiApiException} subclass not matched by the
+     * more specific typed handlers above.
      */
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiErrorResponse> handleAllExceptions(Exception ex) {
-        if (ex instanceof GeminiApiException gae) {
-            log("[AI_ERROR][UNCLASSIFIED]", gae);
-            return response(HttpStatus.INTERNAL_SERVER_ERROR, "AI Error", gae);
-        }
-        log.error("[SYSTEM_ERROR] Unhandled exception: {}", ex.getMessage(), ex);
-        ApiErrorResponse body = ApiErrorResponse.builder()
-                .status(HttpStatus.INTERNAL_SERVER_ERROR.value())
-                .error("Internal Server Error")
-                .userMessage("An unexpected system error occurred.")
-                .debugMessage(ex.getMessage())
-                .retryable(false)
-                .build();
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+    @ExceptionHandler(GeminiApiException.class)
+    public ResponseEntity<ApiErrorResponse> handleGeminiApiException(GeminiApiException ex) {
+        log("[AI_ERROR][UNCLASSIFIED]", ex);
+        return response(HttpStatus.INTERNAL_SERVER_ERROR, "AI Error", ex);
     }
 
     // ─── Helpers ───────────────────────────────────────────────────────────────

@@ -46,11 +46,14 @@ public class GeminiClient {
     private static final String BASE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
-    /** Maximum number of automatic retry attempts for retryable errors. */
-    private static final int MAX_RETRY_ATTEMPTS = 3;
+    /** Maximum number of automatic retry attempts for retryable errors (503 demand spikes need more time). */
+    private static final int MAX_RETRY_ATTEMPTS = 4;
 
-    /** Initial back-off delay before the first retry. Doubles on each attempt. */
-    private static final Duration INITIAL_BACKOFF = Duration.ofSeconds(2);
+    /** Initial back-off delay before the first retry. Doubles on each attempt, capped at 30 s. */
+    private static final Duration INITIAL_BACKOFF = Duration.ofSeconds(5);
+
+    /** Maximum back-off cap — prevents extremely long waits on many retries. */
+    private static final Duration MAX_BACKOFF = Duration.ofSeconds(30);
 
     @Value("${gemini.api.key}")
     private String apiKey;
@@ -126,10 +129,12 @@ public class GeminiClient {
                     .bodyToMono(String.class)
                     // ── Retry: exponential back-off for retryable statuses ─────
                     .retryWhen(Retry.backoff(MAX_RETRY_ATTEMPTS, INITIAL_BACKOFF)
+                            .maxBackoff(MAX_BACKOFF)
                             .filter(this::isRetryable)
                             .doBeforeRetry(signal -> log.warn(
-                                    "[AI_RETRY] Attempt {} after retryable error: {}",
+                                    "[AI_RETRY] Attempt {}/{} after retryable error: {}",
                                     signal.totalRetries() + 1,
+                                    MAX_RETRY_ATTEMPTS,
                                     signal.failure().getMessage())))
                     .block();
 

@@ -20,7 +20,7 @@ import java.time.LocalDateTime;
 
 @Slf4j
 @RestController
-@RequestMapping("/ai")
+@RequestMapping("/api/ai")
 @RequiredArgsConstructor
 public class AIController {
 
