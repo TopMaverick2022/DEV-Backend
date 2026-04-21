@@ -63,6 +63,7 @@ public class CodeReviewService {
     private final CodeFileRepository codeFileRepository;
     private final CodeReviewRepository codeReviewRepository;
     private final ProjectService projectService;
+    private final com.developerev.repository.ProjectRepository projectRepository;
     private final ObjectMapper objectMapper;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -99,7 +100,18 @@ public class CodeReviewService {
 
         // ── Stage 2: Clear old workspace dir first (removes stale .git, old files) ──
         Long targetId = linkedProjectId != null ? linkedProjectId : project.getId();
-        Path workspaceDir = java.nio.file.Paths.get("workspaces", "project_" + targetId).toAbsolutePath().normalize();
+        
+        String dirName = "project_" + targetId;
+        if (linkedProjectId != null) {
+             com.developerev.model.Project p = projectRepository.findById(linkedProjectId).orElse(null);
+             if (p != null && p.getName() != null) {
+                 dirName = p.getName().replaceAll("[\\\\/:*?\"<>|]", "_");
+             }
+        } else {
+             dirName = project.getName().replaceAll("[\\\\/:*?\"<>|]", "_");
+        }
+        
+        Path workspaceDir = java.nio.file.Paths.get("workspaces", dirName).toAbsolutePath().normalize();
 
         if (java.nio.file.Files.exists(workspaceDir)) {
             log.info("Clearing existing workspace before ZIP extraction: {}", workspaceDir);

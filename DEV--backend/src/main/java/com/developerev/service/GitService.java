@@ -12,6 +12,10 @@ import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileSystemUtils;
 
+import com.developerev.repository.ProjectRepository;
+import com.developerev.model.Project;
+import lombok.RequiredArgsConstructor;
+
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,7 +26,10 @@ import java.util.*;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class GitService {
+
+    private final ProjectRepository projectRepository;
 
     private static final String WORKSPACE_BASE = "workspaces";
 
@@ -99,7 +106,14 @@ public class GitService {
     }
 
     public File getRepoDir(Long projectId) {
-        Path path = Paths.get(WORKSPACE_BASE, "project_" + projectId).toAbsolutePath().normalize();
+        String dirName = "project_" + projectId;
+        if (projectRepository != null) {
+            Project project = projectRepository.findById(projectId).orElse(null);
+            if (project != null && project.getName() != null) {
+                dirName = project.getName().replaceAll("[\\\\/:*?\"<>|]", "_"); // Sanitize for filesystem
+            }
+        }
+        Path path = Paths.get(WORKSPACE_BASE, dirName).toAbsolutePath().normalize();
         return path.toFile();
     }
 
