@@ -164,9 +164,29 @@ public class AnalysisProgressController {
                         // ignore
                     }
                 } else {
-                    log.error("SSE analysis stream failed for project {}: {}", projectId, e.getMessage(), e);
+                    // Unwrap RuntimeException to check if the root cause is a quota/rate-limit error
+                    Throwable root = e;
+                    while (root.getCause() != null && !(root instanceof com.developerev.ai.exception.GeminiApiException)) {
+                        root = root.getCause();
+                    }
+
+                    String ssePayload;
+                    if (root instanceof com.developerev.ai.exception.DailyQuotaExceededException dqe) {
+                        log.error("Daily quota exceeded during SSE analysis for project {}: {}", projectId, dqe.getDebugMessage());
+                        ssePayload = "QUOTA_EXCEEDED:" + dqe.getUserMessage();
+                    } else if (root instanceof com.developerev.ai.exception.RateLimitExceededException rle) {
+                        log.error("Rate limit exceeded during SSE analysis for project {}: {}", projectId, rle.getDebugMessage());
+                        ssePayload = "QUOTA_EXCEEDED:" + rle.getUserMessage();
+                    } else if (root instanceof com.developerev.ai.exception.GeminiApiException gae) {
+                        log.error("Gemini API error during SSE analysis for project {}: {}", projectId, gae.getDebugMessage());
+                        ssePayload = "ERROR:" + gae.getUserMessage();
+                    } else {
+                        log.error("SSE analysis stream failed for project {}: {}", projectId, e.getMessage(), e);
+                        ssePayload = "ERROR:" + e.getMessage();
+                    }
+
                     try {
-                        emitter.send(SseEmitter.event().data("ERROR:" + e.getMessage()));
+                        emitter.send(SseEmitter.event().data(ssePayload));
                         emitter.complete();
                     } catch (Exception sendEx) {
                         emitter.completeWithError(sendEx);
