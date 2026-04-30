@@ -55,6 +55,13 @@ public class AnalysisProgressController {
         // 10-minute timeout — large projects may take a while
         SseEmitter emitter = new SseEmitter(600_000L);
 
+        // Cancel existing task for this project if one is already running
+        java.util.concurrent.Future<?> existingTask = activeTasks.get(projectId);
+        if (existingTask != null && !existingTask.isDone()) {
+            log.info("Cancelling existing analysis task for project {} before starting new one.", projectId);
+            existingTask.cancel(true);
+        }
+
         java.util.concurrent.Future<?> future = executor.submit(() -> {
             try {
                 Path workspaceDir = gitService.getRepoDir(projectId).toPath();
@@ -213,6 +220,7 @@ public class AnalysisProgressController {
     public org.springframework.http.ResponseEntity<String> cancelAnalysis(@PathVariable("projectId") Long projectId) {
         java.util.concurrent.Future<?> future = activeTasks.get(projectId);
         if (future != null) {
+            log.info("Explicit cancellation request received for project {}", projectId);
             future.cancel(true); // interrupts the running thread
             activeTasks.remove(projectId);
             return org.springframework.http.ResponseEntity.ok("Analysis cancelled successfully.");

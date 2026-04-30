@@ -19,7 +19,7 @@ public class GitHubController {
     public ResponseEntity<String> getRepositoryDetails(
             @RequestParam("owner") String owner,
             @RequestParam("repo") String repo,
-            @RequestParam("token") String token) {
+            @RequestParam(value = "token", required = false, defaultValue = "") String token) {
 
         String response = gitHubService.getRepositoryDetails(owner, repo, token);
         return ResponseEntity.ok(response);
@@ -29,7 +29,7 @@ public class GitHubController {
     public ResponseEntity<String> getRepositoryCommits(
             @RequestParam("owner") String owner,
             @RequestParam("repo") String repo,
-            @RequestParam("token") String token) {
+            @RequestParam(value = "token", required = false, defaultValue = "") String token) {
 
         String response = gitHubService.getRepositoryCommits(owner, repo, token);
         return ResponseEntity.ok(response);

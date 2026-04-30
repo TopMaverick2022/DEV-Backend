@@ -36,7 +36,11 @@ public class GitHubService {
 
     private HttpHeaders createHeaders(String token) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(token);
+        // Only attach the Authorization header when a real token is supplied.
+        // Sending an empty "Bearer " header causes GitHub to reject the request.
+        if (token != null && !token.isBlank()) {
+            headers.setBearerAuth(token);
+        }
         headers.set("Accept", "application/vnd.github+json");
         return headers;
     }

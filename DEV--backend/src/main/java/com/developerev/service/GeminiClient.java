@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import reactor.netty.http.client.HttpClient;
+import reactor.core.Exceptions;
 import reactor.util.retry.Retry;
 
 import java.time.Duration;
@@ -42,8 +43,10 @@ public class GeminiClient implements AiClient {
     private static final String BASE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
-    private static final int MAX_RETRY_ATTEMPTS = 5;
-    private static final Duration INITIAL_BACKOFF = Duration.ofSeconds(5);
+    // Per-key retry attempts — kept low (2) so we rotate to the next key quickly on 503.
+    // Too many retries on the same failing key waste minutes of wallclock time.
+    private static final int MAX_RETRY_ATTEMPTS = 2;
+    private static final Duration INITIAL_BACKOFF = Duration.ofSeconds(3);
     private static final Duration MAX_BACKOFF = Duration.ofSeconds(30);
 
     private final WebClient webClient;
@@ -107,35 +110,71 @@ public class GeminiClient implements AiClient {
             throw new InvalidApiKeyException("No API keys configured");
         }
 
-        // Try up to the number of keys we have if we hit quota errors
+        // Try every key in round-robin order. On quota (429) or service errors (503/timeout),
+        // rotate to the next key instead of retrying the same failing one.
         int maxAttempts = apiKeys.size();
         for (int i = 0; i < Math.max(1, maxAttempts); i++) {
             try {
                 return executeRequest(prompt);
+
             } catch (DailyQuotaExceededException | RateLimitExceededException e) {
-                log.error("[AI_QUOTA] Key {} failed due to quota/rate limits: {}", currentKeyIndex.get() % apiKeys.size(), e.getMessage());
+                log.error("[AI_QUOTA] Key {} failed due to quota/rate limits: {}",
+                        currentKeyIndex.get() % apiKeys.size(), e.getMessage());
                 if (i < maxAttempts - 1) {
                     rotateKey();
                 } else {
-                    log.error("[AI_QUOTA] All Gemini keys exhausted.");
-                    throw e; // Let FallbackAiService handle it
-                }
-            } catch (GeminiApiException e) {
-                // If it bubbles up here, the internal WebClient retries are exhausted.
-                // For any retryable error (503, timeout) OR an invalid key, try the next key.
-                boolean canRotate = (e.isRetryable() || e instanceof InvalidApiKeyException) && i < maxAttempts - 1;
-                if (canRotate) {
-                    log.warn("[AI_KEY_ROTATION] Key index {} failed with {} ({}). Rotating to next key.",
-                            currentKeyIndex.get() % apiKeys.size(),
-                            e.getClass().getSimpleName(),
-                            e.getMessage());
-                    rotateKey();
-                } else {
+                    log.error("[AI_QUOTA] All {} Gemini keys are quota-exhausted.", apiKeys.size());
                     throw e;
+                }
+
+            } catch (Exception rawEx) {
+                // Unwrap Reactor's RetryExhaustedException so we can inspect the real cause
+                Throwable cause = Exceptions.isRetryExhausted(rawEx) && rawEx.getCause() != null
+                        ? rawEx.getCause()
+                        : rawEx;
+
+                if (cause instanceof DailyQuotaExceededException | cause instanceof RateLimitExceededException) {
+                    // Quota error wrapped in RetryExhausted — rotate key
+                    log.error("[AI_QUOTA] Key {} exhausted (wrapped): {}",
+                            currentKeyIndex.get() % apiKeys.size(), cause.getMessage());
+                    if (i < maxAttempts - 1) {
+                        rotateKey();
+                    } else {
+                        log.error("[AI_QUOTA] All {} Gemini keys are quota-exhausted.", apiKeys.size());
+                        if (cause instanceof GeminiApiException gae) throw gae;
+                        throw new DailyQuotaExceededException(cause.getMessage());
+                    }
+
+                } else if (cause instanceof GeminiApiException gae) {
+                    // 503 / timeout / invalid-key unwrapped — rotate if retryable
+                    boolean canRotate = (gae.isRetryable() || gae instanceof InvalidApiKeyException)
+                            && i < maxAttempts - 1;
+                    if (canRotate) {
+                        log.warn("[AI_KEY_ROTATION] Key index {} failed with {} — rotating to next key. ({})",
+                                currentKeyIndex.get() % apiKeys.size(),
+                                gae.getClass().getSimpleName(),
+                                gae.getMessage());
+                        rotateKey();
+                    } else {
+                        throw gae;
+                    }
+
+                } else {
+                    // Truly unexpected — do NOT silently swallow; rotate if keys remain
+                    log.warn("[AI_KEY_ROTATION] Key index {} threw unexpected {}: {} — rotating.",
+                            currentKeyIndex.get() % apiKeys.size(),
+                            rawEx.getClass().getSimpleName(),
+                            rawEx.getMessage());
+                    if (i < maxAttempts - 1) {
+                        rotateKey();
+                    } else {
+                        throw new AiServiceUnavailableException(
+                                "All Gemini keys failed. Last error: " + rawEx.getMessage(), rawEx);
+                    }
                 }
             }
         }
-        throw new AiServiceUnavailableException("Failed to generate content after trying all keys");
+        throw new AiServiceUnavailableException("Failed to generate content after trying all " + apiKeys.size() + " keys");
     }
 
     private String executeRequest(String prompt) {

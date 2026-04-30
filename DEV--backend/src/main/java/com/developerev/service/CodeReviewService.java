@@ -182,13 +182,6 @@ public class CodeReviewService {
             boolean isIncremental, Consumer<String> progressCallback) {
         List<FileReviewDto> allReviews = new ArrayList<>();
 
-        // 1) Respect free-tier Gemini daily quota — 100 files × 7-file batches = ~14
-        // API calls max
-        if (!isIncremental && sourceFiles.size() > 100) {
-            log.warn("Project has {} files. Limiting initial analysis to first 100 files to protect free-tier quota.",
-                    sourceFiles.size());
-            sourceFiles = sourceFiles.subList(0, 100);
-        }
         int totalFiles = sourceFiles.size();
         int processedFiles = 0;
 
@@ -203,6 +196,11 @@ public class CodeReviewService {
             String filename = file.getFileName().toString();
             String relativePath = rootDir.relativize(file).toString().replace("\\", "/");
             String content = fileContentService.readFile(file);
+
+            if (Thread.currentThread().isInterrupted()) {
+                log.info("Analysis interrupted during file metadata gathering.");
+                return allReviews; // Exit early
+            }
 
             if (content.isBlank()) {
                 processedFiles++;
@@ -374,6 +372,12 @@ public class CodeReviewService {
                 log.error("Critical AI API failure during batch ({}): {}", filenames, e.getMessage());
                 throw e; // Always propagate Gemini 429/500 errors to the caller
             } catch (Exception e) {
+                // IMPORTANT: Check if the exception was caused by a thread interrupt (cancellation)
+                if (Thread.currentThread().isInterrupted() || e instanceof InterruptedException || e.getCause() instanceof InterruptedException) {
+                    log.info("Batch analysis interrupted. Stopping analysis for project {}.", project.getId());
+                    throw new RuntimeException("Analysis was cancelled by the user.");
+                }
+
                 log.warn(
                         "Batch analysis failed due to parsing error for files {}. Error: {}. Falling back to single file analysis.",
                         filenames, e.getMessage());
@@ -419,7 +423,9 @@ public class CodeReviewService {
 
             if (i + BATCH_SIZE < totalPending) {
                 try {
-                    Thread.sleep(2000);
+                    // 3-second cooldown between batches to reduce pressure on each free-tier key.
+                    // With 7 keys and key rotation, this keeps per-key request rates manageable.
+                    Thread.sleep(3000);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
                     log.info("Batch processing sleep interrupted. Cancelling analysis.");
