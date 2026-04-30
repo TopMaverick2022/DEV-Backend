@@ -122,8 +122,7 @@ public class AiController {
     public ResponseEntity<ProjectReviewResponseDto> analyzeWorkspace(
             @PathVariable("projectId") Long projectId,
             @RequestParam(value = "projectName", required = false, defaultValue = "Workspace") String projectName) throws Exception {
-        java.nio.file.Path workspaceDir = java.nio.file.Paths.get("workspaces", "project_" + projectId)
-                .toAbsolutePath().normalize();
+        java.nio.file.Path workspaceDir = gitService.getRepoDir(projectId).toPath();
         if (!java.nio.file.Files.exists(workspaceDir)) {
             throw new jakarta.persistence.EntityNotFoundException("Workspace not found for project " + projectId);
         }

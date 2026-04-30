@@ -18,7 +18,7 @@ import java.nio.charset.StandardCharsets;
 @RequiredArgsConstructor
 public class LogAnalysisService {
 
-    private final GeminiClient geminiClient;
+    private final AiClient aiClient;
     private final ObjectMapper objectMapper;
 
     public LogAnalysisResponseDto analyzeLogFile(MultipartFile logFile) {
@@ -81,18 +81,11 @@ public class LogAnalysisService {
             LOG FILE CONTENT:
             """ + logContent.toString();
 
-        log.info("Calling Gemini for Log Analysis. Length: {}", logContent.length());
-        String geminiResponse = geminiClient.callGemini(prompt);
+        String aiResponse = aiClient.generateContent(prompt);
 
         String cleanedResponse = "";
         try {
-            JsonNode root = objectMapper.readTree(geminiResponse);
-            String textContent = root.path("candidates").get(0)
-                    .path("content")
-                    .path("parts").get(0)
-                    .path("text").asText();
-
-            cleanedResponse = textContent
+            cleanedResponse = aiResponse
                     .replace("```json", "")
                     .replace("```", "")
                     .trim();
@@ -114,7 +107,7 @@ public class LogAnalysisService {
 
         } catch (Exception e) {
             log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini Log Analysis response. Cleaned: {}", cleanedResponse, e);
-            throw new AiResponseParsingException("Failed to parse Log Analysis response. Raw: " + (cleanedResponse.isEmpty() ? geminiResponse : cleanedResponse), e);
+            throw new AiResponseParsingException("Failed to parse Log Analysis response. Raw: " + (cleanedResponse.isEmpty() ? aiResponse : cleanedResponse), e);
         }
     }
 }

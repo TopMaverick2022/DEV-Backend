@@ -40,7 +40,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AntiGravityService {
 
-  private final GeminiClient geminiClient;
+  private final AiClient aiClient;
   private final FeatureRepository featureRepository;
   private final TaskRepository taskRepository;
   private final SprintRepository sprintRepository;
@@ -80,18 +80,10 @@ public class AntiGravityService {
         Feature:
         """ + featureDescription;
 
-    String geminiResponse = geminiClient.callGemini(prompt);
+    String aiResponse = aiClient.generateContent(prompt);
 
     try {
-      // Parse Gemini API JSON structure to extract the text
-      JsonNode root = objectMapper.readTree(geminiResponse);
-      String textContent = root.path("candidates").get(0)
-          .path("content")
-          .path("parts").get(0)
-          .path("text").asText();
-
-      // Clean the text from markdown formatting
-      String cleanedResponse = textContent
+      String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
           .trim();
@@ -131,7 +123,7 @@ public class AntiGravityService {
       log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini project-plan response", e);
       throw new AiResponseParsingException(
           "JSON parse failure in generateProjectPlan. Raw response excerpt: "
-              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+              + (aiResponse != null ? aiResponse.substring(0, Math.min(aiResponse.length(), 200)) : "null"),
           e);
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateProjectPlan", e);
@@ -204,17 +196,10 @@ public class AntiGravityService {
         """.formatted(feature.getName(), taskList);
 
     log.info("Calling Gemini for sprint generation of feature: {}", feature.getName());
-    String geminiResponse = geminiClient.callGemini(prompt);
+    String aiResponse = aiClient.generateContent(prompt);
 
     try {
-      // 4. Extract text content from Gemini response envelope
-      JsonNode root = objectMapper.readTree(geminiResponse);
-      String textContent = root.path("candidates").get(0)
-          .path("content")
-          .path("parts").get(0)
-          .path("text").asText();
-
-      String cleanedResponse = textContent
+      String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
           .trim();
@@ -222,12 +207,12 @@ public class AntiGravityService {
       log.debug("Gemini sprint response (cleaned): {}", cleanedResponse);
 
       // 5. Parse Gemini response into DTO
-      SprintAiResponseDto aiResponse = objectMapper.readValue(cleanedResponse, SprintAiResponseDto.class);
+      SprintAiResponseDto dtoResponse = objectMapper.readValue(cleanedResponse, SprintAiResponseDto.class);
 
       List<SprintDetailDto> result = new ArrayList<>();
 
       // 6. Persist each sprint and assign tasks by ID (exact, reliable lookup)
-      for (SprintAiResponseDto.SprintItem sprintItem : aiResponse.getSprints()) {
+      for (SprintAiResponseDto.SprintItem sprintItem : dtoResponse.getSprints()) {
 
         int sprintNumber = sprintItem.getSprintNumber() > 0
             ? sprintItem.getSprintNumber()
@@ -269,7 +254,7 @@ public class AntiGravityService {
       throw new AiResponseParsingException(
           "JSON parse failure in generateSprints for featureId=" + featureId
               + ". Raw response excerpt: "
-              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+              + (aiResponse != null ? aiResponse.substring(0, Math.min(aiResponse.length(), 200)) : "null"),
           e);
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateSprints", e);
@@ -338,17 +323,10 @@ public class AntiGravityService {
         """.formatted(taskList);
 
     log.info("Calling Gemini for dependency detection on feature: {}", featureId);
-    String geminiResponse = geminiClient.callGemini(prompt);
+    String aiResponse = aiClient.generateContent(prompt);
 
     try {
-      // 3. Extract text from Gemini envelope
-      JsonNode root = objectMapper.readTree(geminiResponse);
-      String textContent = root.path("candidates").get(0)
-          .path("content")
-          .path("parts").get(0)
-          .path("text").asText();
-
-      String cleanedResponse = textContent
+      String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
           .trim();
@@ -356,12 +334,12 @@ public class AntiGravityService {
       log.debug("Gemini dependency response (cleaned): {}", cleanedResponse);
 
       // 4. Parse AI response
-      DependencyAiResponseDto aiResponse = objectMapper.readValue(cleanedResponse, DependencyAiResponseDto.class);
+      DependencyAiResponseDto dtoResponse = objectMapper.readValue(cleanedResponse, DependencyAiResponseDto.class);
 
       List<TaskDependencyDto> result = new ArrayList<>();
 
-      if (aiResponse.getDependencies() != null) {
-        for (DependencyAiResponseDto.DependencyItem item : aiResponse.getDependencies()) {
+      if (dtoResponse.getDependencies() != null) {
+        for (DependencyAiResponseDto.DependencyItem item : dtoResponse.getDependencies()) {
 
           Task dependentTask = taskMap.get(item.getTaskId());
           Task prerequisiteTask = taskMap.get(item.getDependsOn());
@@ -406,7 +384,7 @@ public class AntiGravityService {
       throw new AiResponseParsingException(
           "JSON parse failure in detectDependencies for featureId=" + featureId
               + ". Raw response excerpt: "
-              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+              + (aiResponse != null ? aiResponse.substring(0, Math.min(aiResponse.length(), 200)) : "null"),
           e);
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in detectDependencies", e);
@@ -554,17 +532,10 @@ public class AntiGravityService {
         """.formatted(projectIdea);
 
     log.info("Calling Gemini for architecture generation: {}", projectIdea);
-    String geminiResponse = geminiClient.callGemini(prompt);
+    String aiResponse = aiClient.generateContent(prompt);
 
     try {
-      // 2. Extract text from Gemini response envelope
-      JsonNode root = objectMapper.readTree(geminiResponse);
-      String textContent = root.path("candidates").get(0)
-          .path("content")
-          .path("parts").get(0)
-          .path("text").asText();
-
-      String cleanedResponse = textContent
+      String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
           .trim();
@@ -599,7 +570,7 @@ public class AntiGravityService {
       throw new AiResponseParsingException(
           "JSON parse failure in generateArchitecture for idea='" + projectIdea + "'"
               + ". Raw response excerpt: "
-              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+              + (aiResponse != null ? aiResponse.substring(0, Math.min(aiResponse.length(), 200)) : "null"),
           e);
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateArchitecture", e);
@@ -653,16 +624,10 @@ public class AntiGravityService {
         """ + featureDescription;
 
     log.info("Calling Gemini for Database Schema Generation: {}", featureDescription);
-    String geminiResponse = geminiClient.callGemini(prompt);
+    String aiResponse = aiClient.generateContent(prompt);
 
     try {
-      JsonNode root = objectMapper.readTree(geminiResponse);
-      String textContent = root.path("candidates").get(0)
-          .path("content")
-          .path("parts").get(0)
-          .path("text").asText();
-
-      String cleanedResponse = textContent
+      String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
           .trim();
@@ -677,7 +642,7 @@ public class AntiGravityService {
       log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini Database Schema response", e);
       throw new AiResponseParsingException(
           "JSON parse failure in generateDatabaseSchema. Raw response excerpt: "
-              + (geminiResponse != null ? geminiResponse.substring(0, Math.min(geminiResponse.length(), 200)) : "null"),
+              + (aiResponse != null ? aiResponse.substring(0, Math.min(aiResponse.length(), 200)) : "null"),
           e);
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateDatabaseSchema", e);
@@ -849,22 +814,12 @@ public class AntiGravityService {
     }
 
     log.info("Calling Gemini for {} analysis", type);
-    String geminiResponse = geminiClient.callGemini(prompt);
+    String aiResponse = aiClient.generateContent(prompt);
 
     try {
-      com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(geminiResponse);
-      String textContent = root.path("candidates").get(0)
-          .path("content")
-          .path("parts").get(0)
-          .path("text").asText();
-
-      String answer = textContent.replace("```markdown", "").replace("```", "").trim();
+      String answer = aiResponse.replace("```markdown", "").replace("```", "").trim();
       activityLogService.logCurrentUserActivity(null, "Analyzed Code", "Ran " + type + " analysis on codebase");
       return answer;
-    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini explanation response", e);
-      throw new com.developerev.ai.exception.AiResponseParsingException(
-          "JSON parse failure in analyzeCode for type=" + type, e);
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in analyzeCode", e);
       throw new com.developerev.ai.exception.UnexpectedAiException("Unexpected error in analyzeCode: " + e.getMessage(),
@@ -878,19 +833,10 @@ public class AntiGravityService {
 
   public String askAI(String prompt) {
     log.info("Calling AI with custom prompt length: {}", prompt.length());
-    String geminiResponse = geminiClient.callGemini(prompt);
+    String aiResponse = aiClient.generateContent(prompt);
 
     try {
-      com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(geminiResponse);
-      String textContent = root.path("candidates").get(0)
-          .path("content")
-          .path("parts").get(0)
-          .path("text").asText();
-
-      return textContent.replace("```json", "").replace("```markdown", "").replace("```", "").trim();
-    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini response for custom prompt", e);
-      throw new com.developerev.ai.exception.AiResponseParsingException("JSON parse failure in askAI", e);
+      return aiResponse.replace("```json", "").replace("```markdown", "").replace("```", "").trim();
     } catch (Exception e) {
       log.error("[AI_ERROR][UNEXPECTED] Unexpected error in askAI", e);
       throw new com.developerev.ai.exception.UnexpectedAiException("Unexpected error in askAI: " + e.getMessage(), e);

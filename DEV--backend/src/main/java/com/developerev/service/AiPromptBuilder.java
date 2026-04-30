@@ -44,6 +44,7 @@ public class AiPromptBuilder {
                 - Only report issues, suggestions, and insights
                 - Include line numbers wherever possible
                 - Return ONLY valid JSON — no markdown, no code fences, no extra text
+                - STRICT JSON: Do NOT use string concatenation (no `+` operators), comments, or trailing commas. All strings must be complete and properly quoted.
 
                 Required JSON format:
                 {
@@ -84,6 +85,7 @@ public class AiPromptBuilder {
                 - Only report issues, suggestions, and insights
                 - Include line numbers wherever possible
                 - Return ONLY valid JSON — an ARRAY of objects. No markdown, no code fences, no extra text.
+                - STRICT JSON: Do NOT use string concatenation (no `+` operators), comments, or trailing commas. All strings must be complete and properly quoted.
 
                 Required JSON format ([ ] array of objects):
                 [

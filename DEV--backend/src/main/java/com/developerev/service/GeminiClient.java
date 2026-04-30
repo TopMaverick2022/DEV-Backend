@@ -6,6 +6,7 @@ import com.developerev.ai.exception.EmptyAiResponseException;
 import com.developerev.ai.exception.InvalidApiKeyException;
 import com.developerev.ai.exception.NetworkTimeoutException;
 import com.developerev.ai.exception.RateLimitExceededException;
+import com.developerev.ai.exception.GeminiApiException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.channel.ChannelOption;
@@ -22,47 +23,38 @@ import reactor.netty.http.client.HttpClient;
 import reactor.util.retry.Retry;
 
 import java.time.Duration;
-import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Low-level HTTP client for the Gemini Generative Language API.
- *
- * <p>Production features implemented:
- * <ul>
- *   <li>Connect timeout: 5 s, Read/Write timeout: 30 s</li>
- *   <li>HTTP error mapping → typed {@link com.developerev.ai.exception.GeminiApiException} subclasses</li>
- *   <li>Automatic retry (3 attempts, exponential back-off) for retryable errors (429, 500, 503, timeout)</li>
- *   <li>Null/empty response guard → {@link EmptyAiResponseException}</li>
- * </ul>
+ * Implements AiClient to return extracted text.
+ * Supports multiple API keys with automatic rotation on quota/rate limits.
  */
 @Slf4j
-@Service
-public class GeminiClient {
+@Service("geminiClient")
+public class GeminiClient implements AiClient {
 
     private static final String BASE_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 
-    /** Maximum number of automatic retry attempts for retryable errors (503 demand spikes need more time). */
-    private static final int MAX_RETRY_ATTEMPTS = 4;
-
-    /** Initial back-off delay before the first retry. Doubles on each attempt, capped at 30 s. */
+    private static final int MAX_RETRY_ATTEMPTS = 5;
     private static final Duration INITIAL_BACKOFF = Duration.ofSeconds(5);
-
-    /** Maximum back-off cap — prevents extremely long waits on many retries. */
     private static final Duration MAX_BACKOFF = Duration.ofSeconds(30);
-
-    @Value("${gemini.api.key}")
-    private String apiKey;
 
     private final WebClient webClient;
     private final ObjectMapper tokenMapper = new ObjectMapper();
+    
+    private final List<String> apiKeys;
+    private final AtomicInteger currentKeyIndex = new AtomicInteger(0);
 
-    public GeminiClient() {
-        // ── Netty HttpClient with connect + read/write timeouts ───────────────
+    public GeminiClient(
+            @Value("${ai.gemini.keys:${gemini.api.key:}}") String keysConfig) {
+        
         HttpClient httpClient = HttpClient.create()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
                 .doOnConnected(conn -> conn
@@ -73,61 +65,114 @@ public class GeminiClient {
                 .baseUrl(BASE_URL)
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
+                
+        // Debug: Log all environment variables starting with GEMINI to see what the JVM sees
+        System.getenv().forEach((k, v) -> {
+            if (k.startsWith("GEMINI")) {
+                log.info("[DEBUG_ENV] Found Env Var: {} = {} (Length: {})", k, k.equals("GEMINI_API_KEYS") ? "[HIDDEN_LIST]" : v, v.length());
+            }
+        });
+
+        // Parse comma-separated keys
+        if (keysConfig != null && !keysConfig.isBlank()) {
+            this.apiKeys = Arrays.stream(keysConfig.split(","))
+                    .map(String::trim)
+                    .filter(k -> !k.isEmpty())
+                    .toList();
+            log.info("GeminiClient initialized with {} API keys.", this.apiKeys.size());
+        } else {
+            this.apiKeys = new ArrayList<>();
+            log.warn("No Gemini API keys configured! Please set GEMINI_API_KEYS environment variable.");
+        }
     }
 
-    /**
-     * Calls the Gemini API with {@code prompt} and returns the raw JSON response string.
-     *
-     * @param prompt the user prompt to send
-     * @return raw JSON response body from the API
-     * @throws RateLimitExceededException    on HTTP 429
-     * @throws DailyQuotaExceededException   when the daily quota resource is exhausted
-     * @throws InvalidApiKeyException        on HTTP 401 / 403
-     * @throws AiServiceUnavailableException on HTTP 500 / 503
-     * @throws NetworkTimeoutException       on connect or read timeout
-     * @throws EmptyAiResponseException      when the response body is null or blank
-     */
-    public String callGemini(String prompt) {
+    private String getNextKey() {
+        if (apiKeys.isEmpty()) {
+            throw new InvalidApiKeyException("No Gemini API keys available in configuration.");
+        }
+        return apiKeys.get(currentKeyIndex.get() % apiKeys.size());
+    }
+    
+    private void rotateKey() {
+        if (apiKeys.size() > 1) {
+            int newIndex = currentKeyIndex.incrementAndGet();
+            log.warn("[AI_KEY_ROTATION] Switched to Gemini API key index {} (of {})", 
+                    (newIndex % apiKeys.size()) + 1, apiKeys.size());
+        }
+    }
 
+    @Override
+    public String generateContent(String prompt) {
+        if (apiKeys.isEmpty()) {
+            throw new InvalidApiKeyException("No API keys configured");
+        }
+
+        // Try up to the number of keys we have if we hit quota errors
+        int maxAttempts = apiKeys.size();
+        for (int i = 0; i < Math.max(1, maxAttempts); i++) {
+            try {
+                return executeRequest(prompt);
+            } catch (DailyQuotaExceededException | RateLimitExceededException e) {
+                log.error("[AI_QUOTA] Key {} failed due to quota/rate limits: {}", currentKeyIndex.get() % apiKeys.size(), e.getMessage());
+                if (i < maxAttempts - 1) {
+                    rotateKey();
+                } else {
+                    log.error("[AI_QUOTA] All Gemini keys exhausted.");
+                    throw e; // Let FallbackAiService handle it
+                }
+            } catch (GeminiApiException e) {
+                // If it bubbles up here, the internal WebClient retries are exhausted.
+                // For any retryable error (503, timeout) OR an invalid key, try the next key.
+                boolean canRotate = (e.isRetryable() || e instanceof InvalidApiKeyException) && i < maxAttempts - 1;
+                if (canRotate) {
+                    log.warn("[AI_KEY_ROTATION] Key index {} failed with {} ({}). Rotating to next key.",
+                            currentKeyIndex.get() % apiKeys.size(),
+                            e.getClass().getSimpleName(),
+                            e.getMessage());
+                    rotateKey();
+                } else {
+                    throw e;
+                }
+            }
+        }
+        throw new AiServiceUnavailableException("Failed to generate content after trying all keys");
+    }
+
+    private String executeRequest(String prompt) {
+        int keyIndex = currentKeyIndex.get() % apiKeys.size();
+        log.info("[AI_REQUEST] Using Gemini API key {} of {}...", (keyIndex + 1), apiKeys.size());
+        String currentKey = getNextKey();
+        
         Map<String, Object> requestBody = Map.of(
                 "contents", List.of(
                         Map.of("parts", List.of(Map.of("text", prompt)))));
 
         try {
             String response = webClient.post()
-                    .uri("?key=" + apiKey)
+                    .uri("?key=" + currentKey)
                     .bodyValue(requestBody)
                     .retrieve()
-                    // ── Map HTTP error statuses to typed exceptions ────────────
                     .onStatus(HttpStatusCode::is4xxClientError, clientResponse -> {
                         int code = clientResponse.statusCode().value();
                         return clientResponse.bodyToMono(String.class).map(body -> {
                             if (code == 429) {
-                                // Distinguish rate-limit from daily quota by inspecting the body
                                 if (body.contains("RATE_LIMIT_EXCEEDED") || body.contains("rateLimitExceeded")) {
-                                    return new RateLimitExceededException(
-                                            "Gemini HTTP 429 – rate limit. Body: " + body);
+                                    return new RateLimitExceededException("Gemini HTTP 429 – rate limit. Body: " + body);
                                 }
-                                return new DailyQuotaExceededException(
-                                        "Gemini HTTP 429 – quota exhausted. Body: " + body);
+                                return new DailyQuotaExceededException("Gemini HTTP 429 – quota exhausted. Body: " + body);
                             }
                             if (code == 401 || code == 403) {
-                                return new InvalidApiKeyException(
-                                        "Gemini HTTP " + code + " – invalid/missing API key. Body: " + body);
+                                return new InvalidApiKeyException("Gemini HTTP " + code + " – invalid/missing API key. Body: " + body);
                             }
-                            // Unknown 4xx — treat as service unavailable
-                            return new AiServiceUnavailableException(
-                                    "Gemini HTTP " + code + " client error. Body: " + body);
+                            return new AiServiceUnavailableException("Gemini HTTP " + code + " client error. Body: " + body);
                         });
                     })
                     .onStatus(HttpStatusCode::is5xxServerError, serverResponse -> {
                         int code = serverResponse.statusCode().value();
                         return serverResponse.bodyToMono(String.class).map(body ->
-                                new AiServiceUnavailableException(
-                                        "Gemini HTTP " + code + " server error. Body: " + body));
+                                new AiServiceUnavailableException("Gemini HTTP " + code + " server error. Body: " + body));
                     })
                     .bodyToMono(String.class)
-                    // ── Retry: exponential back-off for retryable statuses ─────
                     .retryWhen(Retry.backoff(MAX_RETRY_ATTEMPTS, INITIAL_BACKOFF)
                             .maxBackoff(MAX_BACKOFF)
                             .filter(this::isRetryable)
@@ -138,14 +183,12 @@ public class GeminiClient {
                                     signal.failure().getMessage())))
                     .block();
 
-            // ── Guard: null / blank response ───────────────────────────────────
             if (response == null || response.isBlank()) {
                 throw new EmptyAiResponseException(
                         "Gemini returned a null or empty response body for prompt (first 120 chars): "
                                 + prompt.substring(0, Math.min(prompt.length(), 120)));
             }
 
-            // ── Parse usage metadata for logging ──────────────────────────────
             try {
                 JsonNode root = tokenMapper.readTree(response);
                 long tokens = root.path("usageMetadata").path("totalTokenCount").asLong(0);
@@ -155,28 +198,33 @@ public class GeminiClient {
                             root.path("usageMetadata").path("candidatesTokenCount").asLong(0),
                             tokens);
                 }
+                
+                // Extract the text content from the Gemini JSON envelope
+                return root.path("candidates").get(0)
+                        .path("content")
+                        .path("parts").get(0)
+                        .path("text").asText();
+                        
             } catch (Exception e) {
-                log.trace("Could not parse usage metadata: {}", e.getMessage());
+                log.error("Failed to parse Gemini JSON envelope. Raw: {}", response.substring(0, Math.min(response.length(), 200)));
+                throw new RuntimeException("Failed to extract text from Gemini response", e);
             }
 
-            return response;
-
         } catch (WebClientRequestException ex) {
-            // WebClientRequestException = connect or read timeout at the Netty level
-            throw new NetworkTimeoutException(
-                    "Gemini connection/read timeout: " + ex.getMessage(), ex);
+            throw new NetworkTimeoutException("Gemini connection/read timeout: " + ex.getMessage(), ex);
         }
     }
 
-    /**
-     * Determines whether a {@link Throwable} is eligible for an automatic retry.
-     * Only our retryable typed exceptions qualify; all others propagate immediately.
-     */
     private boolean isRetryable(Throwable throwable) {
-        if (throwable instanceof com.developerev.ai.exception.GeminiApiException ex) {
+        if (throwable instanceof GeminiApiException ex) {
             return ex.isRetryable();
         }
         return false;
     }
+    
+    // Kept for backward compatibility during refactoring if needed by other classes
+    @Deprecated
+    public String callGemini(String prompt) {
+        return generateContent(prompt);
+    }
 }
-

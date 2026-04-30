@@ -56,7 +56,7 @@ public class CodeReviewService {
     private final LanguageDetectionService languageDetectionService;
     private final FileContentService fileContentService;
     private final AiPromptBuilder aiPromptBuilder;
-    private final GeminiClient geminiClient;
+    private final AiClient aiClient;
 
     // ── Persistence ────────────────────────────────────────────────────────
     private final CodeProjectRepository codeProjectRepository;
@@ -65,12 +65,14 @@ public class CodeReviewService {
     private final ProjectService projectService;
     private final com.developerev.repository.ProjectRepository projectRepository;
     private final ObjectMapper objectMapper;
+    private final GitService gitService;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Public entry point
     // ─────────────────────────────────────────────────────────────────────────
 
-    public ProjectReviewResponseDto reviewProject(MultipartFile zipFile, String username, Long linkedProjectId) throws IOException {
+    public ProjectReviewResponseDto reviewProject(MultipartFile zipFile, String username, Long linkedProjectId)
+            throws IOException {
 
         log.info("ZIP received: {} from user: {}", zipFile.getOriginalFilename(), username);
 
@@ -100,18 +102,14 @@ public class CodeReviewService {
 
         // ── Stage 2: Clear old workspace dir first (removes stale .git, old files) ──
         Long targetId = linkedProjectId != null ? linkedProjectId : project.getId();
-        
-        String dirName = "project_" + targetId;
+
+        Path workspaceDir;
         if (linkedProjectId != null) {
-             com.developerev.model.Project p = projectRepository.findById(linkedProjectId).orElse(null);
-             if (p != null && p.getName() != null) {
-                 dirName = p.getName().replaceAll("[\\\\/:*?\"<>|]", "_");
-             }
+            workspaceDir = gitService.getRepoDir(linkedProjectId).toPath();
         } else {
-             dirName = project.getName().replaceAll("[\\\\/:*?\"<>|]", "_");
+            String dirName = project.getName().replaceAll("[\\\\/:*?\"<>|]", "_");
+            workspaceDir = java.nio.file.Paths.get("workspaces", dirName).toAbsolutePath().normalize();
         }
-        
-        Path workspaceDir = java.nio.file.Paths.get("workspaces", dirName).toAbsolutePath().normalize();
 
         if (java.nio.file.Files.exists(workspaceDir)) {
             log.info("Clearing existing workspace before ZIP extraction: {}", workspaceDir);
@@ -121,7 +119,8 @@ public class CodeReviewService {
         zipExtractorService.extractTo(zipFile, workspaceDir);
         log.info("Code upload complete and stored in workspace: {}", workspaceDir);
 
-        // ── Stage 3: Reset commit tracking so incremental analysis won't skip ZIP files ──
+        // ── Stage 3: Reset commit tracking so incremental analysis won't skip ZIP
+        // files ──
         if (linkedProjectId != null) {
             projectService.resetLastAnalyzedCommit(linkedProjectId);
         }
@@ -139,7 +138,8 @@ public class CodeReviewService {
     // Workspace entry point (for JGit clones, NO ZIP INVOLVED)
     // ─────────────────────────────────────────────────────────────────────────
 
-    public ProjectReviewResponseDto reviewWorkspace(Path workspaceDir, String projectName, Long linkedProjectId) throws IOException {
+    public ProjectReviewResponseDto reviewWorkspace(Path workspaceDir, String projectName, Long linkedProjectId)
+            throws IOException {
         log.info("Analyzing workspace directory: {}", workspaceDir.toString());
 
         CodeProject project = codeProjectRepository.save(
@@ -150,7 +150,7 @@ public class CodeReviewService {
         log.info("Created CodeProject id={} name={}", project.getId(), project.getName());
 
         List<Path> sourceFiles = directoryScannerService.scan(workspaceDir);
-        
+
         List<FileReviewDto> fileReviews = processFilesInBatches(sourceFiles, project, workspaceDir, false, null);
 
         log.info("Workspace code review complete: {} files reviewed for project id={}",
@@ -170,19 +170,23 @@ public class CodeReviewService {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Chunks files, extracts contents, creates CodeFile entities, calls Gemini once per batch,
+     * Chunks files, extracts contents, creates CodeFile entities, calls Gemini once
+     * per batch,
      * and persists reviews, returning the combined FileReviewDto results.
      *
-     * @param progressCallback optional SSE callback: receives "current/total:filename" events
+     * @param progressCallback optional SSE callback: receives
+     *                         "current/total:filename" events
      */
     public List<FileReviewDto> processFilesInBatches(
             List<Path> sourceFiles, CodeProject project, Path rootDir,
             boolean isIncremental, Consumer<String> progressCallback) {
         List<FileReviewDto> allReviews = new ArrayList<>();
-        
-        // 1) Respect free-tier Gemini daily quota — 100 files × 15-file batches = ~7 API calls max
+
+        // 1) Respect free-tier Gemini daily quota — 100 files × 7-file batches = ~14
+        // API calls max
         if (!isIncremental && sourceFiles.size() > 100) {
-            log.warn("Project has {} files. Limiting initial analysis to first 100 files to protect free-tier quota.", sourceFiles.size());
+            log.warn("Project has {} files. Limiting initial analysis to first 100 files to protect free-tier quota.",
+                    sourceFiles.size());
             sourceFiles = sourceFiles.subList(0, 100);
         }
         int totalFiles = sourceFiles.size();
@@ -199,7 +203,7 @@ public class CodeReviewService {
             String filename = file.getFileName().toString();
             String relativePath = rootDir.relativize(file).toString().replace("\\", "/");
             String content = fileContentService.readFile(file);
-            
+
             if (content.isBlank()) {
                 processedFiles++;
                 if (progressCallback != null) {
@@ -209,21 +213,15 @@ public class CodeReviewService {
             }
 
             String fileHash = DigestUtils.md5DigestAsHex(content.getBytes(StandardCharsets.UTF_8));
-            Optional<CodeFile> cachedFileOpt = codeFileRepository.findFirstByFileHash(fileHash);
+            List<CodeFile> validCachedFiles = codeFileRepository.findByFileHashWithReview(fileHash);
 
-            if (cachedFileOpt.isPresent()) {
-                // CACHE HIT — only reuse if the cached review has real data (not an empty/failed result)
-                CodeFile cachedFile = cachedFileOpt.get();
+            if (!validCachedFiles.isEmpty()) {
+                // CACHE HIT — The new repository method ensures this file has a completed review
+                CodeFile cachedFile = validCachedFiles.get(0);
                 List<CodeReview> cachedReviews = codeReviewRepository.findByFileId(cachedFile.getId());
 
-                // Determine if this is a real non-empty cached result worth reusing
-                boolean hasRealCachedData = !cachedReviews.isEmpty() &&
-                        cachedReviews.stream().anyMatch(r ->
-                                (r.getIssues() != null && !r.getIssues().equals("[]")) ||
-                                (r.getSuggestions() != null && !r.getSuggestions().equals("[]")) ||
-                                (r.getArchitectureInsights() != null && !r.getArchitectureInsights().equals("[]")) ||
-                                (r.getBugCount() > 0)
-                        );
+                // We know this is true because of the SQL query, but check just to be safe
+                boolean hasRealCachedData = !cachedReviews.isEmpty();
 
                 if (hasRealCachedData) {
                     CodeFile codeFile = codeFileRepository.save(
@@ -238,16 +236,16 @@ public class CodeReviewService {
 
                     CodeReview cachedReview = cachedReviews.get(0);
                     codeReviewRepository.save(
-                        CodeReview.builder()
-                                .fileId(codeFile.getId())
-                                .language(language)
-                                .issues(cachedReview.getIssues())
-                                .suggestions(cachedReview.getSuggestions())
-                                .architectureInsights(cachedReview.getArchitectureInsights())
-                                .bugCount(cachedReview.getBugCount())
-                                .securityCount(cachedReview.getSecurityCount())
-                                .performanceCount(cachedReview.getPerformanceCount())
-                                .build());
+                            CodeReview.builder()
+                                    .fileId(codeFile.getId())
+                                    .language(language)
+                                    .issues(cachedReview.getIssues())
+                                    .suggestions(cachedReview.getSuggestions())
+                                    .architectureInsights(cachedReview.getArchitectureInsights())
+                                    .bugCount(cachedReview.getBugCount())
+                                    .securityCount(cachedReview.getSecurityCount())
+                                    .performanceCount(cachedReview.getPerformanceCount())
+                                    .build());
 
                     FileReviewDto dto = new FileReviewDto();
                     dto.setFilename(filename);
@@ -255,16 +253,26 @@ public class CodeReviewService {
                     dto.setLanguage(language);
                     try {
                         if (cachedReview.getIssues() != null && !cachedReview.getIssues().equals("[]")) {
-                            dto.setIssues(objectMapper.readValue(cachedReview.getIssues(), new TypeReference<List<FileReviewDto.IssueDto>>(){}));
-                        } else dto.setIssues(new ArrayList<>());
+                            dto.setIssues(objectMapper.readValue(cachedReview.getIssues(),
+                                    new TypeReference<List<FileReviewDto.IssueDto>>() {
+                                    }));
+                        } else
+                            dto.setIssues(new ArrayList<>());
 
                         if (cachedReview.getSuggestions() != null && !cachedReview.getSuggestions().equals("[]")) {
-                            dto.setSuggestions(objectMapper.readValue(cachedReview.getSuggestions(), new TypeReference<List<FileReviewDto.SuggestionDto>>(){}));
-                        } else dto.setSuggestions(new ArrayList<>());
+                            dto.setSuggestions(objectMapper.readValue(cachedReview.getSuggestions(),
+                                    new TypeReference<List<FileReviewDto.SuggestionDto>>() {
+                                    }));
+                        } else
+                            dto.setSuggestions(new ArrayList<>());
 
-                        if (cachedReview.getArchitectureInsights() != null && !cachedReview.getArchitectureInsights().equals("[]")) {
-                            dto.setArchitectureInsights(objectMapper.readValue(cachedReview.getArchitectureInsights(), new TypeReference<List<String>>(){}));
-                        } else dto.setArchitectureInsights(new ArrayList<>());
+                        if (cachedReview.getArchitectureInsights() != null
+                                && !cachedReview.getArchitectureInsights().equals("[]")) {
+                            dto.setArchitectureInsights(objectMapper.readValue(cachedReview.getArchitectureInsights(),
+                                    new TypeReference<List<String>>() {
+                                    }));
+                        } else
+                            dto.setArchitectureInsights(new ArrayList<>());
                     } catch (Exception e) {
                         log.warn("Failed to parse cached review for {}: {}", filename, e.getMessage());
                         dto.setIssues(new ArrayList<>());
@@ -316,9 +324,10 @@ public class CodeReviewService {
             }
         }
 
-        // Process pending files in chunks of 15 (reduces API calls by ~65% vs batch-5)
-        // 15 files × 6 000 chars ≈ 22 500 tokens — well within Gemini Flash's 1 M token window
-        final int BATCH_SIZE = 15;
+        // Process pending files in chunks of 3 (reduces JSON complexity and
+        // hallucination risks)
+        // Smaller batches significantly lower the chance of invalid JSON generation
+        final int BATCH_SIZE = 7;
         int totalPending = pendingFiles.size();
 
         for (int i = 0; i < totalPending; i += BATCH_SIZE) {
@@ -328,7 +337,7 @@ public class CodeReviewService {
             }
 
             int end = Math.min(i + BATCH_SIZE, totalPending);
-            
+
             List<Path> batchPaths = pendingFiles.subList(i, end);
             List<String> filenames = pendingFilenames.subList(i, end);
             List<String> languages = pendingLanguages.subList(i, end);
@@ -347,7 +356,8 @@ public class CodeReviewService {
             String prompt = aiPromptBuilder.buildBatchPrompt(filenames, languages, contents);
 
             try {
-                List<FileReviewDto> batchReviews = callAiBatchAndParse(prompt, filenames, languages, rootDir, batchPaths);
+                List<FileReviewDto> batchReviews = callAiBatchAndParse(prompt, filenames, languages, rootDir,
+                        batchPaths);
 
                 for (FileReviewDto review : batchReviews) {
                     CodeFile matchingCodeFile = savedCodeFiles.stream()
@@ -355,7 +365,8 @@ public class CodeReviewService {
                             .findFirst().orElse(null);
 
                     if (matchingCodeFile != null) {
-                        persistReview(matchingCodeFile.getId(), review.getLanguage() != null ? review.getLanguage() : "Unknown", review);
+                        persistReview(matchingCodeFile.getId(),
+                                review.getLanguage() != null ? review.getLanguage() : "Unknown", review);
                         allReviews.add(review);
                     }
                 }
@@ -363,12 +374,48 @@ public class CodeReviewService {
                 log.error("Critical AI API failure during batch ({}): {}", filenames, e.getMessage());
                 throw e; // Always propagate Gemini 429/500 errors to the caller
             } catch (Exception e) {
-                // Log with full file list so we know which batch failed
-                log.error("Batch analysis failed for files {}. Error: {}", filenames, e.getMessage());
-                // Rethrow so the SSE controller emits a visible ERROR event, not a fake COMPLETE
-                throw new RuntimeException("Batch analysis failed for files " + filenames + ": " + e.getMessage(), e);
-            }
+                log.warn(
+                        "Batch analysis failed due to parsing error for files {}. Error: {}. Falling back to single file analysis.",
+                        filenames, e.getMessage());
 
+                // Fallback to single file processing
+                for (int j = 0; j < filenames.size(); j++) {
+                    String singleFilename = filenames.get(j);
+                    try {
+                        log.info("Fallback: Analyzing single file: {}", singleFilename);
+                        String singlePrompt = aiPromptBuilder.buildBatchPrompt(
+                                List.of(singleFilename),
+                                List.of(languages.get(j)),
+                                List.of(contents.get(j)));
+                        List<FileReviewDto> singleReview = callAiBatchAndParse(
+                                singlePrompt,
+                                List.of(singleFilename),
+                                List.of(languages.get(j)),
+                                rootDir,
+                                List.of(batchPaths.get(j)));
+
+                        for (FileReviewDto review : singleReview) {
+                            CodeFile matchingCodeFile = savedCodeFiles.stream()
+                                    .filter(cf -> cf.getFilename().equals(review.getFilename()))
+                                    .findFirst().orElse(null);
+
+                            if (matchingCodeFile != null) {
+                                persistReview(matchingCodeFile.getId(),
+                                        review.getLanguage() != null ? review.getLanguage() : "Unknown", review);
+                                allReviews.add(review);
+                            }
+                        }
+                    } catch (com.developerev.ai.exception.GeminiApiException gae) {
+                        log.error("Critical AI API failure during fallback for file {}: {}", singleFilename,
+                                gae.getMessage());
+                        throw gae; // Propagate quota errors even in fallback
+                    } catch (Exception singleEx) {
+                        log.error("Fallback analysis also failed for file {}. Skipping file. Error: {}", singleFilename,
+                                singleEx.getMessage());
+                        // Do not throw, allow the rest of the batch to be processed
+                    }
+                }
+            }
 
             if (i + BATCH_SIZE < totalPending) {
                 try {
@@ -380,7 +427,7 @@ public class CodeReviewService {
                 }
             }
         }
-        
+
         return allReviews;
     }
 
@@ -389,23 +436,21 @@ public class CodeReviewService {
      * Uses regex to robustly extract the JSON array even when Gemini includes
      * "thinking" tags, markdown fences, or extra prefixes in its response.
      */
-    private List<FileReviewDto> callAiBatchAndParse(String prompt, List<String> filenames, List<String> languages, Path rootDir, List<Path> batchPaths) {
-        String geminiResponse = geminiClient.callGemini(prompt);
+    private List<FileReviewDto> callAiBatchAndParse(String prompt, List<String> filenames, List<String> languages,
+            Path rootDir, List<Path> batchPaths) {
+        String aiResponseText = aiClient.generateContent(prompt);
         try {
-            JsonNode root = objectMapper.readTree(geminiResponse);
-            String textContent = root.path("candidates").get(0)
-                    .path("content")
-                    .path("parts").get(0)
-                    .path("text").asText();
-
-            String jsonArray = extractJsonArray(textContent);
+            String jsonArray = extractJsonArray(aiResponseText);
             if (jsonArray == null || jsonArray.isBlank()) {
                 log.error("AI response did not contain a valid JSON array. Raw text (first 500 chars): {}",
-                        textContent.substring(0, Math.min(textContent.length(), 500)));
-                throw new RuntimeException("AI response did not contain a parseable JSON array for batch: " + filenames);
+                        aiResponseText.substring(0, Math.min(aiResponseText.length(), 500)));
+                throw new RuntimeException(
+                        "AI response did not contain a parseable JSON array for batch: " + filenames);
             }
 
-            List<FileReviewDto> dtos = objectMapper.readValue(jsonArray, new com.fasterxml.jackson.core.type.TypeReference<List<FileReviewDto>>() {});
+            List<FileReviewDto> dtos = objectMapper.readValue(jsonArray,
+                    new com.fasterxml.jackson.core.type.TypeReference<List<FileReviewDto>>() {
+                    });
 
             // Enrich dtos with path and fallback language
             for (FileReviewDto dto : dtos) {
@@ -427,36 +472,52 @@ public class CodeReviewService {
             // Do NOT silently return 0 bugs. Rethrow so the caller logs a real error.
             log.error("AI batch review parsing failed for files {}. Raw response snippet: {}. Error: {}",
                     filenames,
-                    geminiResponse.substring(0, Math.min(geminiResponse.length(), 500)),
+                    aiResponseText.substring(0, Math.min(aiResponseText.length(), 500)),
                     e.getMessage());
-            throw new RuntimeException("Failed to parse AI batch response for files: " + filenames + " — " + e.getMessage(), e);
+            throw new RuntimeException(
+                    "Failed to parse AI batch response for files: " + filenames + " — " + e.getMessage(), e);
         }
     }
 
     /**
-     * Extracts the first complete JSON array (starting with '[', ending with ']') from
+     * Extracts the first complete JSON array (starting with '[', ending with ']')
+     * from
      * raw AI response text. This handles Gemini responses that include:
      * - Leading "thinking" text before the JSON
      * - Markdown code fences (```json ... ```)
      * - Trailing text after the closing bracket
      */
     private String extractJsonArray(String text) {
-        if (text == null || text.isBlank()) return null;
+        if (text == null || text.isBlank())
+            return null;
+
+        String extracted = null;
 
         // 1. Try to find a ```json ... ``` code fence first
-        java.util.regex.Matcher fenceMatcher =
-                java.util.regex.Pattern.compile("```(?:json)?\\s*([\\s\\S]*?)```")
-                        .matcher(text);
+        java.util.regex.Matcher fenceMatcher = java.util.regex.Pattern.compile("```(?:json)?\\s*([\\s\\S]*?)```")
+                .matcher(text);
         if (fenceMatcher.find()) {
             String fenced = fenceMatcher.group(1).trim();
-            if (fenced.startsWith("[")) return fenced;
+            if (fenced.startsWith("["))
+                extracted = fenced;
         }
 
         // 2. Find the first '[' and last ']' and extract everything in between
-        int start = text.indexOf('[');
-        int end = text.lastIndexOf(']');
-        if (start != -1 && end != -1 && end > start) {
-            return text.substring(start, end + 1).trim();
+        if (extracted == null) {
+            int start = text.indexOf('[');
+            int end = text.lastIndexOf(']');
+            if (start != -1 && end != -1 && end > start) {
+                extracted = text.substring(start, end + 1).trim();
+            }
+        }
+
+        if (extracted != null) {
+            // Sanitize JSON to fix common LLM hallucinations
+            return extracted
+                    .replaceAll("\\+\\s*\"", "\"") // remove + before strings
+                    .replaceAll("\"\\s*\\+", "\"") // remove + after strings
+                    .replaceAll(",\\s*]", "]") // fix trailing comma in arrays
+                    .replaceAll(",\\s*}", "}"); // fix trailing comma in objects
         }
 
         return null;

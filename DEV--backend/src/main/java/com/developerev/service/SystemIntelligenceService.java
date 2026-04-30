@@ -20,7 +20,7 @@ public class SystemIntelligenceService {
     private final ZipExtractorService zipExtractorService;
     private final DirectoryScannerService directoryScannerService;
     private final FileContentService fileContentService;
-    private final GeminiClient geminiClient;
+    private final AiClient aiClient;
     private final ObjectMapper objectMapper;
 
     public SystemQueryResponseDto answerSystemQuery(MultipartFile zipFile, String query) {
@@ -73,16 +73,10 @@ public class SystemIntelligenceService {
                 %s
                 """.formatted(query, codebaseBuilder.toString());
 
-            log.info("Calling Gemini for System Query. Payload length: {}", prompt.length());
-            String geminiResponse = geminiClient.callGemini(prompt);
+            log.info("Calling AI for System Query. Payload length: {}", prompt.length());
+            String aiResponse = aiClient.generateContent(prompt);
 
-            JsonNode root = objectMapper.readTree(geminiResponse);
-            String textContent = root.path("candidates").get(0)
-                    .path("content")
-                    .path("parts").get(0)
-                    .path("text").asText();
-
-            String cleanedResponse = textContent
+            String cleanedResponse = aiResponse
                     .replace("```json", "")
                     .replace("```", "")
                     .trim();

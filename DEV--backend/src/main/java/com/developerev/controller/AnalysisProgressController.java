@@ -57,8 +57,7 @@ public class AnalysisProgressController {
 
         java.util.concurrent.Future<?> future = executor.submit(() -> {
             try {
-                Path workspaceDir = Paths.get("workspaces", "project_" + projectId)
-                        .toAbsolutePath().normalize();
+                Path workspaceDir = gitService.getRepoDir(projectId).toPath();
 
                 if (!Files.exists(workspaceDir)) {
                     emitter.send(SseEmitter.event().data("ERROR:Workspace not found for project " + projectId));
@@ -164,10 +163,19 @@ public class AnalysisProgressController {
                         // ignore
                     }
                 } else {
-                    // Unwrap RuntimeException to check if the root cause is a quota/rate-limit error
+                    // Robustly unwrap to find the most specific GeminiApiException (Quota, RateLimit, etc.)
                     Throwable root = e;
-                    while (root.getCause() != null && !(root instanceof com.developerev.ai.exception.GeminiApiException)) {
-                        root = root.getCause();
+                    Throwable current = e;
+                    while (current != null) {
+                        if (current instanceof com.developerev.ai.exception.GeminiApiException) {
+                            root = current;
+                            // If we found a specific quota/rate limit error, that's our best "root" error to report
+                            if (current instanceof com.developerev.ai.exception.DailyQuotaExceededException ||
+                                current instanceof com.developerev.ai.exception.RateLimitExceededException) {
+                                break;
+                            }
+                        }
+                        current = current.getCause();
                     }
 
                     String ssePayload;
