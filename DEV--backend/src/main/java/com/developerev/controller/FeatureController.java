@@ -12,9 +12,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/features")
+@RequestMapping("/api/features")
 @RequiredArgsConstructor
 public class FeatureController {
 
@@ -26,6 +27,29 @@ public class FeatureController {
     @GetMapping
     public List<Feature> getAllFeatures() {
         return featureRepository.findAll();
+    }
+
+    /**
+     * GET /features/project/{projectId}
+     *
+     * Returns all features (with tasks) that belong to a specific project.
+     * Used by the Dashboard "Project Plans" tab to render all saved AI plans.
+     */
+    @GetMapping("/project/{projectId}")
+    public ResponseEntity<List<FeatureDetailResponseDto>> getFeaturesByProject(@PathVariable Long projectId) {
+        List<Feature> features = featureRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+        List<FeatureDetailResponseDto> result = features.stream()
+                .map(feature -> {
+                    List<Task> tasks = taskRepository.findByFeatureId(feature.getId());
+                    return new FeatureDetailResponseDto(
+                            feature.getId(),
+                            feature.getName(),
+                            feature.getComplexity(),
+                            feature.getTotalEstimatedHours(),
+                            tasks);
+                })
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(result);
     }
 
     // GET /features/{id} — Return feature + tasks together
