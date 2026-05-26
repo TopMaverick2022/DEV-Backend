@@ -53,4 +53,19 @@ public class TaskController {
             return ResponseEntity.ok(taskRepository.save(task));
         }).orElse(ResponseEntity.notFound().build());
     }
+
+    // PUT /tasks/{id} — Update full task details
+    @PutMapping("/{id}")
+    public ResponseEntity<Task> updateTask(@PathVariable long id, @RequestBody Task updatedTask) {
+        return taskRepository.findById(id).map(task -> {
+            task.setTitle(updatedTask.getTitle());
+            task.setDescription(updatedTask.getDescription());
+            task.setEstimatedHours(updatedTask.getEstimatedHours());
+            task.setPriority(updatedTask.getPriority());
+            if (updatedTask.getType() != null) {
+                task.setType(updatedTask.getType());
+            }
+            return ResponseEntity.ok(taskRepository.save(task));
+        }).orElse(ResponseEntity.notFound().build());
+    }
 }

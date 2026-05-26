@@ -101,4 +101,32 @@ public class FeatureController {
             return ResponseEntity.badRequest().build();
         }
     }
+
+    // DELETE /api/features/{id} — Delete feature + all associated tasks
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteFeature(@PathVariable long id) {
+        if (!featureRepository.existsById(id)) {
+            return ResponseEntity.notFound().build();
+        }
+        List<Task> tasks = taskRepository.findByFeatureId(id);
+        taskRepository.deleteAll(tasks);
+        featureRepository.deleteById(id);
+        return ResponseEntity.ok().build();
+    }
+
+    // PUT /api/features/{id} — Update feature details (name, complexity)
+    @PutMapping("/{id}")
+    public ResponseEntity<Feature> updateFeature(@PathVariable long id, @RequestBody Feature updatedFeature) {
+        return featureRepository.findById(id).map(feature -> {
+            feature.setName(updatedFeature.getName());
+            feature.setComplexity(updatedFeature.getComplexity());
+            if (updatedFeature.getDescription() != null) {
+                feature.setDescription(updatedFeature.getDescription());
+            }
+            if (updatedFeature.getTotalEstimatedHours() != null) {
+                feature.setTotalEstimatedHours(updatedFeature.getTotalEstimatedHours());
+            }
+            return ResponseEntity.ok(featureRepository.save(feature));
+        }).orElse(ResponseEntity.notFound().build());
+    }
 }
