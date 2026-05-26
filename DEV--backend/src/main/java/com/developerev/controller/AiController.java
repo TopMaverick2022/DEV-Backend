@@ -247,4 +247,18 @@ public class AiController {
         return ResponseEntity.ok(systemIntelligenceService.answerSystemQuery(zipFile, query));
     }
 
+    /**
+     * POST /ai/implement-plan/{featureId}
+     * Generate the full code for a given feature plan using Gemini,
+     * and save it directly into the selected project's workspace folder.
+     */
+    @PostMapping("/implement-plan/{featureId}")
+    public ResponseEntity<Map<String, String>> implementPlan(
+            @PathVariable("featureId") Long featureId,
+            org.springframework.security.core.Authentication authentication) {
+        String username = authentication != null ? authentication.getName() : null;
+        antiGravityService.implementPlan(featureId, username);
+        return ResponseEntity.ok(Map.of("message", "Plan implemented and saved successfully"));
+    }
+
 }

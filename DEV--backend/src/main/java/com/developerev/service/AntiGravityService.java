@@ -52,6 +52,7 @@ public class AntiGravityService {
   private final FileContentService fileContentService;
   private final KnowledgeService knowledgeService;
   private final ActivityLogService activityLogService;
+  private final GitService gitService;
 
   public ProjectPlanResponseDto generateProjectPlan(Long projectId, String featureDescription) {
 
@@ -117,6 +118,8 @@ public class AntiGravityService {
         }
       }
 
+      responseDto.setFeatureId(feature.getId());
+
       activityLogService.logCurrentUserActivity(projectId, "Generated Project Plan", "Generated AI plan for feature: " + featureDescription);
       return responseDto;
     } catch (JsonProcessingException e) {
@@ -130,6 +133,97 @@ public class AntiGravityService {
       throw new UnexpectedAiException("Unexpected error in generateProjectPlan: " + e.getMessage(), e);
     }
   }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AI Plan Implementer
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  public void implementPlan(Long featureId, String username) {
+    // 1. Load feature and tasks
+    Feature feature = featureRepository.findById(featureId)
+        .orElseThrow(() -> new RuntimeException("Feature not found with id: " + featureId));
+
+    List<Task> tasks = taskRepository.findByFeatureId(featureId);
+    if (tasks.isEmpty()) {
+      throw new RuntimeException("No tasks found for feature id: " + featureId + ". Generate a project plan first.");
+    }
+
+    StringBuilder taskList = new StringBuilder();
+    for (Task task : tasks) {
+      taskList.append("- ").append(task.getTitle()).append(": ").append(task.getDescription()).append("\n");
+    }
+
+    // 2. Build prompt
+    String prompt = """
+        You are a senior full-stack developer. Your task is to implement the code for a specific feature based on the plan provided.
+        
+        Write the complete, production-ready code for the feature described below.
+        
+        Return ONLY valid JSON.
+        Do not wrap the response in markdown.
+        Do not include ```json or ``` markers.
+        No explanations. No markdown formatting.
+        
+        Response format must strictly be:
+        {
+          "files": [
+            {
+              "path": "src/main/java/com/example/MyClass.java",
+              "content": "package com.example;\\n\\npublic class MyClass {\\n}"
+            }
+          ]
+        }
+        
+        Feature Description:
+        """ + feature.getDescription() + "\n\nTasks:\n" + taskList.toString();
+
+    log.info("Calling Gemini to implement plan for feature: {}", feature.getName());
+    String aiResponse = aiClient.generateContent(prompt);
+
+    try {
+      String cleanedResponse = aiResponse
+          .replace("```json", "")
+          .replace("```", "")
+          .trim();
+
+      log.debug("Gemini implement plan response (cleaned): {}", cleanedResponse);
+
+      JsonNode rootNode = objectMapper.readTree(cleanedResponse);
+      JsonNode filesNode = rootNode.get("files");
+
+      if (filesNode != null && filesNode.isArray()) {
+        java.io.File repoDir = gitService.getRepoDir(feature.getProjectId());
+        if (!repoDir.exists()) {
+          repoDir.mkdirs();
+        }
+
+        for (JsonNode fileNode : filesNode) {
+          String filePath = fileNode.get("path").asText();
+          String fileContent = fileNode.get("content").asText();
+
+          java.io.File targetFile = new java.io.File(repoDir, filePath);
+          
+          // Ensure parent directories exist
+          if (!targetFile.getParentFile().exists()) {
+            targetFile.getParentFile().mkdirs();
+          }
+
+          java.nio.file.Files.writeString(targetFile.toPath(), fileContent);
+          log.info("Wrote generated file to {}", targetFile.getAbsolutePath());
+        }
+      }
+
+      activityLogService.logCurrentUserActivity(feature.getProjectId(), "Implemented Plan", "AI implemented codebase for feature: " + feature.getName());
+
+    } catch (JsonProcessingException e) {
+      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini implement plan response", e);
+      throw new AiResponseParsingException("JSON parse failure in implementPlan.", e);
+    } catch (Exception e) {
+      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in implementPlan", e);
+      throw new UnexpectedAiException("Unexpected error in implementPlan: " + e.getMessage(), e);
+    }
+  }
+
 
   // ─────────────────────────────────────────────────────────────────────────────
   // AI Sprint Generator

@@ -5,6 +5,7 @@ import java.util.List;
 
 @Data
 public class ProjectPlanResponseDto {
+    private Long featureId;
     private String featureName;
     private String complexity;
     private Integer totalEstimatedHours;
