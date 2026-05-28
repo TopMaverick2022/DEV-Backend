@@ -13,6 +13,8 @@ public class ProjectPlanResponseDto {
 
     @Data
     public static class TaskDto {
+        private Long id;
+        private String status;
         private String title;
         private String description;
         private String type;

@@ -38,7 +38,9 @@ public class GitService {
      */
     public void syncRepository(String repoUrl, String token, Long projectId) {
         File repoDir = getRepoDir(projectId);
-        UsernamePasswordCredentialsProvider credentials = new UsernamePasswordCredentialsProvider(token, "");
+        UsernamePasswordCredentialsProvider credentials = (repoUrl != null && repoUrl.contains("gitlab"))
+                ? new UsernamePasswordCredentialsProvider("oauth2", token)
+                : new UsernamePasswordCredentialsProvider(token, "");
 
         try {
             if (repoDir.exists() && new File(repoDir, ".git").exists()) {
@@ -84,7 +86,11 @@ public class GitService {
             throw new RuntimeException("Local workspace not found. Please clone the repository first.");
         }
 
-        UsernamePasswordCredentialsProvider credentials = new UsernamePasswordCredentialsProvider(token, "");
+        Project project = projectRepository.findById(projectId).orElse(null);
+        String repoUrl = project != null ? project.getGithubRepoUrl() : "";
+        UsernamePasswordCredentialsProvider credentials = (repoUrl != null && repoUrl.contains("gitlab"))
+                ? new UsernamePasswordCredentialsProvider("oauth2", token)
+                : new UsernamePasswordCredentialsProvider(token, "");
 
         try (Git git = Git.open(repoDir)) {
             // Stage all files

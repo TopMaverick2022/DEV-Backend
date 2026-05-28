@@ -114,7 +114,9 @@ public class AntiGravityService {
           task.setPriority(taskDto.getPriority());
           task.setStatus(TaskStatus.TODO);
 
-          taskRepository.save(task);
+          com.developerev.model.Task savedTask = taskRepository.save(task);
+          taskDto.setId(savedTask.getId());
+          taskDto.setStatus(savedTask.getStatus().name());
         }
       }
 
