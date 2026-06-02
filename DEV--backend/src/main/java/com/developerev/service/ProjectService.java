@@ -200,10 +200,11 @@ public class ProjectService {
             }
         }
 
-        // Calculate health score: start at 100, deduct points (Bugs=2, Security=5, Perf=1)
-        int healthScore = 100 - (bugs * 2) - (security * 5) - perf;
-        if (healthScore < 0) healthScore = 0;
-        if (filesAnalyzed == 0) healthScore = 0; // Unknown health if no analysis
+        // Calculate health score: use an inverse proportion to prevent exactly 0% while remaining accurate
+        double penalty = (bugs * 2.0) + (security * 5.0) + (perf * 1.0);
+        double healthScore = 100.0 * (100.0 / (100.0 + penalty));
+        healthScore = Math.round(healthScore * 10.0) / 10.0;
+        if (filesAnalyzed == 0) healthScore = 0.0; // Unknown health if no analysis
 
         // Estimate tech debt (1 bug = 1h, security = 3h, perf = 0.5h)
         double hours = bugs * 1.0 + security * 3.0 + perf * 0.5;

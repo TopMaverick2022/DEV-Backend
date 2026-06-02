@@ -89,14 +89,11 @@ public class AnalysisProgressController {
                     if (currentSha != null && !currentSha.equals(masterProject.getLastAnalyzedCommit())) {
                         List<String> changedPaths = gitService.getChangedFiles(projectId, masterProject.getLastAnalyzedCommit(), currentSha);
                         if (!changedPaths.isEmpty()) {
-                            allFiles = allFiles.stream()
-                                    .filter(p -> {
-                                        String rel = workspaceDir.relativize(p).toString().replace("\\", "/");
-                                        return changedPaths.contains(rel);
-                                    })
-                                    .toList();
+                            // We purposefully do NOT filter allFiles here.
+                            // Passing all files allows CodeReviewService to copy cached stats for unchanged files
+                            // into the new CodeProject, ensuring total project health score remains accurate!
                             isIncremental = true;
-                            log.info("Incremental analysis: processing {} changed files for project {}", allFiles.size(), projectId);
+                            log.info("Incremental analysis: processing {} changed files (out of {} total) for project {}", changedPaths.size(), allFiles.size(), projectId);
                         } else {
                             // No changes between commits
                             emitter.send(SseEmitter.event().data("{\"current\":0,\"total\":0,\"filename\":\"No new changes to analyze.\"}"));

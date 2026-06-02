@@ -76,14 +76,16 @@ public class ProjectIssuesController {
                 security += r.getSecurityCount();
                 perf += r.getPerformanceCount();
             }
-            totalBugs += bugs; totalSecurity += security; totalPerf += perf;
+            totalBugs += bugs;
+            totalSecurity += security;
+            totalPerf += perf;
 
             int fileDelta = (bugs * 2) + (security * 5) + perf;
             if (fileDelta > 0) {
                 List<String> reasons = new ArrayList<>();
-                if (security > 0) reasons.add(security + " security issue" + (security > 1 ? "s" : "") + " (−" + (security * 5) + " pts)");
-                if (bugs > 0) reasons.add(bugs + " bug" + (bugs > 1 ? "s" : "") + " (−" + (bugs * 2) + " pts)");
-                if (perf > 0) reasons.add(perf + " performance issue" + (perf > 1 ? "s" : "") + " (−" + perf + " pt" + (perf > 1 ? "s" : "") + ")");
+                if (security > 0) reasons.add(security + " security issue" + (security > 1 ? "s" : "") + " (+" + (security * 5) + " penalty)");
+                if (bugs > 0) reasons.add(bugs + " bug" + (bugs > 1 ? "s" : "") + " (+" + (bugs * 2) + " penalty)");
+                if (perf > 0) reasons.add(perf + " performance issue" + (perf > 1 ? "s" : "") + " (+" + perf + " penalty)");
 
                 Map<String, Object> entry = new LinkedHashMap<>();
                 entry.put("filename", file.getFilename());
@@ -97,7 +99,11 @@ public class ProjectIssuesController {
         // Sort by most deductions first
         fileBreakdowns.sort((a, b) -> Integer.compare((int) b.get("pointsDeducted"), (int) a.get("pointsDeducted")));
 
-        int score = Math.max(0, 100 - (totalBugs * 2) - (totalSecurity * 5) - totalPerf);
+        double penalty = (totalBugs * 2.0) + (totalSecurity * 5.0) + (totalPerf * 1.0);
+        double score = 100.0 * (100.0 / (100.0 + penalty));
+        score = Math.round(score * 10.0) / 10.0;
+        if (files.isEmpty()) score = 0.0;
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("score", score);
         result.put("totalBugs", totalBugs);

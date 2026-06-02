@@ -6,7 +6,7 @@ import lombok.Data;
 @Data
 @Builder
 public class ProjectStatsDto {
-    private int healthScore;
+    private double healthScore;
     private int totalFilesAnalyzed;
     private int totalBugs;
     private int totalSecurityIssues;
