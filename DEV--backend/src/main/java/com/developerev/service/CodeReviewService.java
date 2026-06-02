@@ -126,7 +126,7 @@ public class CodeReviewService {
         }
 
         return ProjectReviewResponseDto.builder()
-                .projectId(project.getId())
+                .projectId(targetId)
                 .projectName(project.getName())
                 .totalFilesReviewed(0)
                 .fileReviews(new ArrayList<>())
@@ -157,7 +157,7 @@ public class CodeReviewService {
                 fileReviews.size(), project.getId());
 
         return ProjectReviewResponseDto.builder()
-                .projectId(project.getId())
+                .projectId(linkedProjectId != null ? linkedProjectId : project.getId())
                 .projectName(project.getName())
                 .totalFilesReviewed(fileReviews.size())
                 .fileReviews(fileReviews)
