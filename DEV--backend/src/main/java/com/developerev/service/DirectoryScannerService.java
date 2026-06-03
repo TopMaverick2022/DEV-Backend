@@ -69,4 +69,46 @@ public class DirectoryScannerService {
         if (dot < 0) return false;
         return ALLOWED_EXTENSIONS.contains(name.substring(dot));
     }
+
+    /**
+     * Scans the project directory and returns a formatted list of all regular files
+     * (excluding ignored directories and binary extensions) relative to the root.
+     */
+    public String getProjectStructure(Path root) {
+        if (!Files.exists(root)) {
+            return "No existing files (empty project).";
+        }
+        try (Stream<Path> stream = Files.walk(root)) {
+            List<String> files = stream
+                    .filter(Files::isRegularFile)
+                    .filter(p -> !isInIgnoredDirectory(root, p))
+                    .filter(p -> !isBinaryFile(p))
+                    .map(p -> root.relativize(p).toString().replace('\\', '/'))
+                    .sorted()
+                    .limit(500) // safety limit
+                    .collect(Collectors.toList());
+
+            if (files.isEmpty()) {
+                return "No existing files.";
+            }
+            return String.join("\n", files);
+        } catch (IOException e) {
+            log.error("Failed to scan project structure at " + root, e);
+            return "Error scanning project structure.";
+        }
+    }
+
+    private boolean isBinaryFile(Path file) {
+        String name = file.getFileName().toString().toLowerCase();
+        int dot = name.lastIndexOf('.');
+        if (dot < 0) return false;
+        String ext = name.substring(dot);
+        return BINARY_EXTENSIONS.contains(ext);
+    }
+
+    private static final Set<String> BINARY_EXTENSIONS = Set.of(
+            ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".gz", ".tar", ".jar", ".war", 
+            ".class", ".exe", ".dll", ".so", ".dylib", ".woff", ".woff2", ".eot", ".ttf", ".mp3", 
+            ".mp4", ".wav", ".avi", ".mov", ".flv", ".svg", ".db", ".sqlite");
 }
+

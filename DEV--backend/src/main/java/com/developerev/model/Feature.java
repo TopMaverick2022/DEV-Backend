@@ -28,6 +28,9 @@ public class Feature {
 
     private Integer totalEstimatedHours;
 
+    @Column(name = "detected_needs", length = 2000)
+    private String detectedNeeds;
+
     private LocalDateTime createdAt;
 
     @PrePersist

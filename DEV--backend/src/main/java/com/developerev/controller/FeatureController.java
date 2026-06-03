@@ -46,7 +46,8 @@ public class FeatureController {
                             feature.getName(),
                             feature.getComplexity(),
                             feature.getTotalEstimatedHours(),
-                            tasks);
+                            tasks,
+                            feature.getDetectedNeeds());
                 })
                 .collect(Collectors.toList());
         return ResponseEntity.ok(result);
@@ -63,7 +64,8 @@ public class FeatureController {
                             feature.getName(),
                             feature.getComplexity(),
                             feature.getTotalEstimatedHours(),
-                            tasks);
+                            tasks,
+                            feature.getDetectedNeeds());
                     return ResponseEntity.ok(dto);
                 })
                 .orElse(ResponseEntity.notFound().build());
@@ -125,6 +127,9 @@ public class FeatureController {
             }
             if (updatedFeature.getTotalEstimatedHours() != null) {
                 feature.setTotalEstimatedHours(updatedFeature.getTotalEstimatedHours());
+            }
+            if (updatedFeature.getDetectedNeeds() != null) {
+                feature.setDetectedNeeds(updatedFeature.getDetectedNeeds());
             }
             return ResponseEntity.ok(featureRepository.save(feature));
         }).orElse(ResponseEntity.notFound().build());

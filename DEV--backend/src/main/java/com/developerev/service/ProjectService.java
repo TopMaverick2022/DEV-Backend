@@ -88,6 +88,13 @@ public class ProjectService {
         project.setDescription(updatedProject.getDescription());
         project.setGithubRepoUrl(updatedProject.getGithubRepoUrl());
         project.setName(updatedProject.getName());
+        project.setLanguage(updatedProject.getLanguage());
+        project.setLanguageVersion(updatedProject.getLanguageVersion());
+        project.setFramework(updatedProject.getFramework());
+        project.setFrameworkVersion(updatedProject.getFrameworkVersion());
+        project.setDatabaseName(updatedProject.getDatabaseName());
+        project.setDatabaseVersion(updatedProject.getDatabaseVersion());
+        project.setDependencies(updatedProject.getDependencies());
         Project saved = projectRepository.save(project);
 
         activityLogService.logActivity(user, saved, "Updated Settings", "Updated project metadata");

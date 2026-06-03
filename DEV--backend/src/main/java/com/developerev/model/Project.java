@@ -28,6 +28,25 @@ public class Project {
 
     private String githubRepoUrl;
 
+    private String language;
+
+    @Column(name = "language_version")
+    private String languageVersion;
+
+    private String framework;
+
+    @Column(name = "framework_version")
+    private String frameworkVersion;
+
+    @Column(name = "database_name")
+    private String databaseName;
+
+    @Column(name = "database_version")
+    private String databaseVersion;
+
+    @Column(columnDefinition = "TEXT")
+    private String dependencies;
+
     @Column(name = "last_analyzed_commit")
     private String lastAnalyzedCommit;
 

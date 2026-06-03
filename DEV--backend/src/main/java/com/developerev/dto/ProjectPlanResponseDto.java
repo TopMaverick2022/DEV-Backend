@@ -9,6 +9,7 @@ public class ProjectPlanResponseDto {
     private String featureName;
     private String complexity;
     private Integer totalEstimatedHours;
+    private List<String> detectedNeeds;
     private List<TaskDto> tasks;
 
     @Data

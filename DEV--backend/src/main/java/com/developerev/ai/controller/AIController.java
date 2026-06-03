@@ -82,6 +82,11 @@ public class AIController {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping("/recommend-dependencies")
+    public ResponseEntity<?> recommendDependencies(@RequestBody com.developerev.dto.RecommendDependenciesRequestDto request) {
+        return ResponseEntity.ok(antiGravityService.recommendDependencies(request));
+    }
+
     private ResponseEntity<CodeReviewResponse> buildErrorResponse(String errorMessage, String providerName,
             HttpStatus status) {
         CodeReviewResponse response = CodeReviewResponse.builder()

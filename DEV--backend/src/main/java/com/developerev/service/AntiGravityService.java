@@ -53,8 +53,25 @@ public class AntiGravityService {
   private final KnowledgeService knowledgeService;
   private final ActivityLogService activityLogService;
   private final GitService gitService;
+  private final com.developerev.repository.ProjectRepository projectRepository;
 
   public ProjectPlanResponseDto generateProjectPlan(Long projectId, String featureDescription) {
+
+    com.developerev.model.Project project = projectRepository.findById(projectId).orElse(null);
+    String stackContext = "";
+    if (project != null && project.getLanguage() != null) {
+      stackContext = String.format("""
+          Project Stack Context:
+          - Language: %s (version: %s)
+          - Framework: %s (version: %s)
+          - Database: %s (version: %s)
+          - Selected Dependencies: %s
+          """,
+          project.getLanguage(), project.getLanguageVersion(),
+          project.getFramework(), project.getFrameworkVersion(),
+          project.getDatabaseName(), project.getDatabaseVersion(),
+          project.getDependencies());
+    }
 
     String prompt = """
         You are a senior software architect.
@@ -63,10 +80,16 @@ public class AntiGravityService {
         Do not include ```json or ``` markers.
         No explanations. No markdown formatting.
 
+        Based on the feature description and project stack context, auto-detect all the specific libraries, dependencies, framework modules, or tools needed for this feature (compatible with the project stack, e.g., if project is Java/Spring Boot and feature is JWT auth, auto-detect "Spring Security", "jjwt library", etc.) and return them in "detectedNeeds".
+
+        Response Format:
         {
           "featureName": "",
           "complexity": "",
           "totalEstimatedHours": 0,
+          "detectedNeeds": [
+             "Dependency Name/Tool Name"
+          ],
           "tasks": [
              {
                "title": "",
@@ -78,8 +101,7 @@ public class AntiGravityService {
           ]
         }
 
-        Feature:
-        """ + featureDescription;
+        """ + stackContext + "\nFeature:\n" + featureDescription;
 
     String aiResponse = aiClient.generateContent(prompt);
 
@@ -98,6 +120,9 @@ public class AntiGravityService {
       feature.setDescription(featureDescription);
       feature.setComplexity(responseDto.getComplexity());
       feature.setTotalEstimatedHours(responseDto.getTotalEstimatedHours());
+      if (responseDto.getDetectedNeeds() != null && !responseDto.getDetectedNeeds().isEmpty()) {
+        feature.setDetectedNeeds(String.join(", ", responseDto.getDetectedNeeds()));
+      }
 
       feature = featureRepository.save(feature);
 
@@ -155,11 +180,43 @@ public class AntiGravityService {
       taskList.append("- ").append(task.getTitle()).append(": ").append(task.getDescription()).append("\n");
     }
 
+    com.developerev.model.Project project = projectRepository.findById(feature.getProjectId()).orElse(null);
+    String stackInfo = "";
+    if (project != null && project.getLanguage() != null) {
+      stackInfo = String.format("""
+          Project Tech Stack Context:
+          - Language: %s (version: %s)
+          - Framework: %s (version: %s)
+          - Database: %s (version: %s)
+          - Base Stack Dependencies: %s
+          """, 
+          project.getLanguage(), project.getLanguageVersion(),
+          project.getFramework(), project.getFrameworkVersion(),
+          project.getDatabaseName(), project.getDatabaseVersion(),
+          project.getDependencies());
+    }
+
+    String featureNeedsInfo = "";
+    if (feature.getDetectedNeeds() != null && !feature.getDetectedNeeds().isEmpty()) {
+      featureNeedsInfo = "\nDetected stack needs/dependencies for this feature: " + feature.getDetectedNeeds() + "\n";
+    }
+
+    java.io.File repoDir = gitService.getRepoDir(feature.getProjectId());
+    String projectStructure = directoryScannerService.getProjectStructure(repoDir.toPath());
+    String projectStructureInfo = "";
+    if (projectStructure != null && !projectStructure.isEmpty()) {
+      projectStructureInfo = "\nExisting Project File/Folder Structure:\n" + projectStructure + "\n";
+    }
+
     // 2. Build prompt
     String prompt = """
-        You are a senior full-stack developer. Your task is to implement the code for a specific feature based on the plan provided.
+        You are a senior full-stack developer. Your task is to implement the code for a specific feature based on the plan, tech stack, existing project file/folder structure, and detected dependencies/needs provided.
         
-        Write the complete, production-ready code for the feature described below.
+        Analyze the existing project file/folder structure below. Align any new or modified files perfectly with this structure. For example, if there is a module/subdirectory (e.g., `DEV--backend`) containing the project codebase, make sure the paths in the generated JSON are nested correctly inside that subdirectory (e.g., starting with `DEV--backend/src/...`) rather than at the root level, so they integrate perfectly.
+        
+        Write the complete, production-ready code for the feature described below. Make sure the files generated are aligned with the specified language, framework, database, and dependencies. For example, if Maven/Gradle is used, update the pom.xml/build.gradle with any new dependencies if needed.
+        
+        Check the existing file paths carefully. If an existing file needs to be modified (like a `pom.xml`, config file, or existing controller/service/component), use its exact path from the project structure.
         
         Return ONLY valid JSON.
         Do not wrap the response in markdown.
@@ -175,6 +232,8 @@ public class AntiGravityService {
             }
           ]
         }
+        
+        """ + stackInfo + featureNeedsInfo + projectStructureInfo + """
         
         Feature Description:
         """ + feature.getDescription() + "\n\nTasks:\n" + taskList.toString();
@@ -194,7 +253,6 @@ public class AntiGravityService {
       JsonNode filesNode = rootNode.get("files");
 
       if (filesNode != null && filesNode.isArray()) {
-        java.io.File repoDir = gitService.getRepoDir(feature.getProjectId());
         if (!repoDir.exists()) {
           repoDir.mkdirs();
         }
@@ -979,6 +1037,60 @@ public class AntiGravityService {
               zipExtractorService.cleanup(tempDir);
           }
       }
+  }
+
+  public List<com.developerev.dto.RecommendedDependencyDto> recommendDependencies(com.developerev.dto.RecommendDependenciesRequestDto request) {
+    String prompt = String.format("""
+        You are a senior software architect.
+        Recommend a list of optional development dependencies or packages for a new project with the following stack:
+        - Language: %s (version %s)
+        - Framework: %s (version %s)
+        - Database: %s (version %s)
+
+        Return ONLY valid JSON.
+        Do not wrap the response in markdown.
+        Do not include ```json or ``` markers.
+        No explanations. No markdown formatting.
+
+        Response format must strictly be a JSON array of objects:
+        [
+          {
+            "name": "Dependency/Library Name",
+            "description": "Brief description of why it is useful",
+            "checked": true
+          }
+        ]
+
+        Provide about 4 to 8 relevant dependencies/libraries for this specific stack. Set "checked" to true for highly recommended ones, and false for other optional ones.
+        """,
+        request.getLanguage() != null ? request.getLanguage() : "Any",
+        request.getLanguageVersion() != null ? request.getLanguageVersion() : "Any",
+        request.getFramework() != null ? request.getFramework() : "Any",
+        request.getFrameworkVersion() != null ? request.getFrameworkVersion() : "Any",
+        request.getDatabase() != null ? request.getDatabase() : "Any",
+        request.getDatabaseVersion() != null ? request.getDatabaseVersion() : "Any"
+    );
+
+    String aiResponse = aiClient.generateContent(prompt);
+    try {
+      String cleanedResponse = aiResponse
+          .replace("```json", "")
+          .replace("```", "")
+          .trim();
+      
+      return objectMapper.readValue(cleanedResponse, new com.fasterxml.jackson.core.type.TypeReference<List<com.developerev.dto.RecommendedDependencyDto>>() {});
+    } catch (Exception e) {
+      log.error("Failed to parse recommended dependencies response: {}", aiResponse, e);
+      List<com.developerev.dto.RecommendedDependencyDto> fallbacks = new ArrayList<>();
+      if ("Java".equalsIgnoreCase(request.getLanguage())) {
+        fallbacks.add(new com.developerev.dto.RecommendedDependencyDto("Lombok", "Java library that reduces boilerplate code", true));
+        fallbacks.add(new com.developerev.dto.RecommendedDependencyDto("Spring Security", "Authentication and access-control framework", false));
+      } else if ("JavaScript".equalsIgnoreCase(request.getLanguage()) || "TypeScript".equalsIgnoreCase(request.getLanguage())) {
+        fallbacks.add(new com.developerev.dto.RecommendedDependencyDto("Axios", "Promise based HTTP client", true));
+        fallbacks.add(new com.developerev.dto.RecommendedDependencyDto("Zod", "TypeScript-first schema validation", false));
+      }
+      return fallbacks;
+    }
   }
 
 }
