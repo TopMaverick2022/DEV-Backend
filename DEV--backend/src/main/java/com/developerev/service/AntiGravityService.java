@@ -645,35 +645,37 @@ public class AntiGravityService {
   public ArchitectureResponseDto generateArchitecture(ArchitectureRequestDto request) {
     String prompt = """
         You are a senior software architect.
-        Return ONLY valid JSON.
-        Do not wrap the response in markdown.
-        Do not include ```json or ``` markers.
-        No explanations. No markdown formatting.
+        Return ONLY valid JSON. No markdown. No ``` markers. No explanations.
 
-        Based on the provided architecture idea or feature plan, design a microservice or component architecture.
-        Identify the key services, databases, APIs, and the events/data flows between them.
+        Design a microservice architecture for the given idea.
+        
+        STRICT RULES:
+        1. Every "producer" and "consumer" in "events" MUST be copied character-for-character from a "name" value in "services".
+        2. Do NOT invent new names for producers or consumers. Only reuse existing service names.
+        3. Every service must connect to at least one event (as producer OR consumer).
+        4. Use short, clear service names (e.g. "AuthService", "OrderService").
         
         Response Format:
         {
           "services": [
             {
-              "name": "string",
-              "description": "string",
-              "database": "string (or null if none)"
+              "name": "AuthService",
+              "description": "Handles user registration, login, JWT token issuance and validation.",
+              "database": "PostgreSQL"
             }
           ],
           "apis": [
             {
-              "method": "GET/POST/PUT/DELETE",
-              "endpoint": "string",
-              "description": "string"
+              "method": "POST",
+              "endpoint": "/api/auth/login",
+              "description": "Authenticates user and returns JWT."
             }
           ],
           "events": [
             {
-              "name": "string (e.g. UserCreatedEvent, API Call)",
-              "producer": "string (Must match a service name)",
-              "consumer": "string (Must match a service name)"
+              "name": "UserRegisteredEvent",
+              "producer": "AuthService",
+              "consumer": "NotificationService"
             }
           ]
         }
