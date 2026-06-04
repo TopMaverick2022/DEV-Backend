@@ -2,6 +2,7 @@ package com.developerev.service;
 
 import com.developerev.ai.exception.AiResponseParsingException;
 import com.developerev.ai.exception.UnexpectedAiException;
+import com.developerev.dto.ArchitectureRequestDto;
 import com.developerev.dto.ArchitectureResponseDto;
 import com.developerev.dto.CriticalPathResponseDto;
 import com.developerev.dto.DatabaseSchemaResponseDto;
@@ -641,51 +642,45 @@ public class AntiGravityService {
   // AI Architecture Generator
   // ─────────────────────────────────────────────────────────────────────────────
 
-  public ArchitectureResponseDto generateArchitecture(String projectIdea) {
-
-    // 1. Build the Gemini prompt
+  public ArchitectureResponseDto generateArchitecture(ArchitectureRequestDto request) {
     String prompt = """
         You are a senior software architect.
+        Return ONLY valid JSON.
+        Do not wrap the response in markdown.
+        Do not include ```json or ``` markers.
+        No explanations. No markdown formatting.
 
-        Design a scalable system architecture for the following project idea.
-
-        Include:
-        1. Microservices (name, description, database)
-        2. REST APIs (method, endpoint, description)
-        3. Event flows (name, producer, consumer)
-        4. External integrations where applicable
-
-        Return ONLY valid JSON. No markdown. No explanations.
-
-        Response format:
+        Based on the provided architecture idea or feature plan, design a microservice or component architecture.
+        Identify the key services, databases, APIs, and the events/data flows between them.
+        
+        Response Format:
         {
           "services": [
             {
-              "name": "",
-              "description": "",
-              "database": ""
+              "name": "string",
+              "description": "string",
+              "database": "string (or null if none)"
             }
           ],
           "apis": [
             {
-              "method": "",
-              "endpoint": "",
-              "description": ""
+              "method": "GET/POST/PUT/DELETE",
+              "endpoint": "string",
+              "description": "string"
             }
           ],
           "events": [
             {
-              "name": "",
-              "producer": "",
-              "consumer": ""
+              "name": "string (e.g. UserCreatedEvent, API Call)",
+              "producer": "string (Must match a service name)",
+              "consumer": "string (Must match a service name)"
             }
           ]
         }
+        
+        Idea / Requirements:
+        """ + request.getIdea();
 
-        Project idea: %s
-        """.formatted(projectIdea);
-
-    log.info("Calling Gemini for architecture generation: {}", projectIdea);
     String aiResponse = aiClient.generateContent(prompt);
 
     try {
@@ -694,41 +689,10 @@ public class AntiGravityService {
           .replace("```", "")
           .trim();
 
-      log.debug("Gemini architecture response (cleaned): {}", cleanedResponse);
-
-      // 3. Parse AI response into DTO
-      ArchitectureResponseDto responseDto = objectMapper.readValue(cleanedResponse, ArchitectureResponseDto.class);
-
-      // 4. Persist the architecture plan to the database
-      ArchitecturePlan plan = ArchitecturePlan.builder()
-          .projectIdea(projectIdea)
-          .architectureJson(cleanedResponse)
-          .build();
-      plan = architecturePlanRepository.save(plan);
-
-      // 5. Attach the DB ID to the response so callers can reference this plan later
-      responseDto.setPlanId(plan.getId());
-
-      log.info("Architecture plan saved with id={}, services={}, apis={}, events={}",
-          plan.getId(),
-          responseDto.getServices() != null ? responseDto.getServices().size() : 0,
-          responseDto.getApis() != null ? responseDto.getApis().size() : 0,
-          responseDto.getEvents() != null ? responseDto.getEvents().size() : 0);
-          
-      activityLogService.logCurrentUserActivity(null, "Generated Architecture", "Generated system architecture plan");
-
-      return responseDto;
-
-    } catch (JsonProcessingException e) {
-      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini architecture response", e);
-      throw new AiResponseParsingException(
-          "JSON parse failure in generateArchitecture for idea='" + projectIdea + "'"
-              + ". Raw response excerpt: "
-              + (aiResponse != null ? aiResponse.substring(0, Math.min(aiResponse.length(), 200)) : "null"),
-          e);
+      return objectMapper.readValue(cleanedResponse, ArchitectureResponseDto.class);
     } catch (Exception e) {
-      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in generateArchitecture", e);
-      throw new UnexpectedAiException("Unexpected error in generateArchitecture: " + e.getMessage(), e);
+      log.error("Failed to parse AI response for architecture: {}", aiResponse, e);
+      throw new RuntimeException("Failed to generate architecture: " + e.getMessage(), e);
     }
   }
 

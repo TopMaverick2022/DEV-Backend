@@ -147,24 +147,41 @@ public class GitController {
         String content = Files.readString(targetFile.toPath());
         List<Integer> addedLines = new ArrayList<>();
         List<Integer> modifiedLines = new ArrayList<>();
+        List<DeletedChunkDto> deletedChunks = new ArrayList<>();
         
         boolean isGitRepo = new File(repoDir, ".git").exists();
         if (isGitRepo) {
             try (Git git = Git.open(repoDir)) {
                 String headContent = getFileContentFromHead(git, relativePath);
                 if (headContent != null) {
+                    // Normalize line endings to avoid entire file mismatch
+                    headContent = headContent.replace("\r\n", "\n").replace("\r", "\n");
+                    String normalizedContent = content.replace("\r\n", "\n").replace("\r", "\n");
+
                     org.eclipse.jgit.diff.RawText headText = new org.eclipse.jgit.diff.RawText(headContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                    org.eclipse.jgit.diff.RawText currentText = new org.eclipse.jgit.diff.RawText(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    org.eclipse.jgit.diff.RawText currentText = new org.eclipse.jgit.diff.RawText(normalizedContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     org.eclipse.jgit.diff.EditList edits = org.eclipse.jgit.diff.MyersDiff.INSTANCE.diff(org.eclipse.jgit.diff.RawTextComparator.DEFAULT, headText, currentText);
+                    
                     for (org.eclipse.jgit.diff.Edit edit : edits) {
                         if (edit.getType() == org.eclipse.jgit.diff.Edit.Type.INSERT) {
                             for (int i = edit.getBeginB() + 1; i <= edit.getEndB(); i++) {
                                 addedLines.add(i);
                             }
+                        } else if (edit.getType() == org.eclipse.jgit.diff.Edit.Type.DELETE) {
+                            List<String> lines = new ArrayList<>();
+                            for (int i = edit.getBeginA(); i < edit.getEndA(); i++) {
+                                lines.add(headText.getString(i));
+                            }
+                            deletedChunks.add(new DeletedChunkDto(edit.getBeginB(), lines));
                         } else if (edit.getType() == org.eclipse.jgit.diff.Edit.Type.REPLACE) {
                             for (int i = edit.getBeginB() + 1; i <= edit.getEndB(); i++) {
                                 modifiedLines.add(i);
                             }
+                            List<String> lines = new ArrayList<>();
+                            for (int i = edit.getBeginA(); i < edit.getEndA(); i++) {
+                                lines.add(headText.getString(i));
+                            }
+                            deletedChunks.add(new DeletedChunkDto(edit.getBeginB(), lines));
                         }
                     }
                 } else {
@@ -179,7 +196,68 @@ public class GitController {
             }
         }
 
-        return ResponseEntity.ok(new FileContentResponseDto(content, addedLines, modifiedLines));
+        return ResponseEntity.ok(new FileContentResponseDto(content, addedLines, modifiedLines, deletedChunks));
+    }
+
+    @PostMapping("/files/{projectId}/save")
+    public ResponseEntity<String> saveFileContent(
+            @PathVariable("projectId") Long projectId,
+            @RequestBody SaveFileRequest request) throws Exception {
+        File repoDir = gitService.getRepoDir(projectId);
+        File targetFile = new File(repoDir, request.getPath());
+
+        // Security check
+        if (!targetFile.getCanonicalPath().startsWith(repoDir.getCanonicalPath())) {
+            throw new org.springframework.security.access.AccessDeniedException("Access denied: Invalid path");
+        }
+
+        // Write content
+        Files.writeString(targetFile.toPath(), request.getContent());
+        return ResponseEntity.ok("File successfully updated.");
+    }
+
+    @DeleteMapping("/files/{projectId}")
+    public ResponseEntity<String> deleteFileOrFolder(
+            @PathVariable("projectId") Long projectId,
+            @RequestParam("path") String relativePath) throws Exception {
+        File repoDir = gitService.getRepoDir(projectId);
+        File target = new File(repoDir, relativePath);
+
+        // Security check
+        if (!target.getCanonicalPath().startsWith(repoDir.getCanonicalPath())) {
+            throw new org.springframework.security.access.AccessDeniedException("Access denied: Invalid path");
+        }
+
+        if (!target.exists()) {
+            throw new jakarta.persistence.EntityNotFoundException("File or folder not found: " + relativePath);
+        }
+
+        if (target.isDirectory()) {
+            org.springframework.util.FileSystemUtils.deleteRecursively(target);
+        } else {
+            target.delete();
+        }
+        return ResponseEntity.ok("Deleted successfully.");
+    }
+
+    @PostMapping("/files/{projectId}/undo")
+    public ResponseEntity<String> undoFileChanges(
+            @PathVariable("projectId") Long projectId,
+            @RequestParam("path") String relativePath) throws Exception {
+        File repoDir = gitService.getRepoDir(projectId);
+        File targetFile = new File(repoDir, relativePath);
+
+        if (!targetFile.getCanonicalPath().startsWith(repoDir.getCanonicalPath())) {
+            throw new org.springframework.security.access.AccessDeniedException("Access denied: Invalid path");
+        }
+
+        boolean isGitRepo = new File(repoDir, ".git").exists();
+        if (isGitRepo) {
+            try (Git git = Git.open(repoDir)) {
+                git.checkout().addPath(relativePath).call();
+            }
+        }
+        return ResponseEntity.ok("Undo successful.");
     }
 
     @GetMapping("/download/{projectId}")
@@ -261,12 +339,31 @@ public class GitController {
         private String content;
         private List<Integer> addedLines;
         private List<Integer> modifiedLines;
+        private List<DeletedChunkDto> deletedChunks;
 
-        public FileContentResponseDto(String content, List<Integer> addedLines, List<Integer> modifiedLines) {
+        public FileContentResponseDto(String content, List<Integer> addedLines, List<Integer> modifiedLines, List<DeletedChunkDto> deletedChunks) {
             this.content = content;
             this.addedLines = addedLines;
             this.modifiedLines = modifiedLines;
+            this.deletedChunks = deletedChunks;
         }
+    }
+
+    @Data
+    public static class DeletedChunkDto {
+        private int linePosition;
+        private List<String> lines;
+
+        public DeletedChunkDto(int linePosition, List<String> lines) {
+            this.linePosition = linePosition;
+            this.lines = lines;
+        }
+    }
+
+    @Data
+    public static class SaveFileRequest {
+        private String path;
+        private String content;
     }
 
     @Data

@@ -1,6 +1,5 @@
 package com.developerev.controller;
 
-import com.developerev.dto.ArchitectureResponseDto;
 import com.developerev.dto.ProjectReviewResponseDto;
 import com.developerev.dto.SprintDetailDto;
 import com.developerev.dto.TaskDependencyDto;
@@ -59,20 +58,6 @@ public class AiController {
     @PostMapping("/detect-dependencies/{featureId}")
     public ResponseEntity<List<TaskDependencyDto>> detectDependencies(@PathVariable("featureId") Long featureId) {
         return ResponseEntity.ok(antiGravityService.detectDependencies(featureId));
-    }
-
-    /**
-     * POST /ai/generate-architecture
-     * Body: { "idea": "Build a payment system" }
-     */
-    @PostMapping("/generate-architecture")
-    public ResponseEntity<ArchitectureResponseDto> generateArchitecture(
-            @RequestBody Map<String, String> body) {
-        String idea = body.get("idea");
-        if (idea == null || idea.isBlank()) {
-            throw new IllegalArgumentException("Idea description is required");
-        }
-        return ResponseEntity.ok(antiGravityService.generateArchitecture(idea));
     }
 
     /**

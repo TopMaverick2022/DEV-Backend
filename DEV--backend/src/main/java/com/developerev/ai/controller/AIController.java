@@ -7,6 +7,8 @@ import com.developerev.ai.exception.TokenLimitExceededException;
 import com.developerev.ai.exception.UnsupportedProviderException;
 import com.developerev.ai.prompt.PromptType;
 import com.developerev.ai.service.AIService;
+import com.developerev.dto.ArchitectureRequestDto;
+import com.developerev.dto.ArchitectureResponseDto;
 import com.developerev.dto.ProjectPlanRequestDto;
 import com.developerev.dto.ProjectPlanResponseDto;
 import com.developerev.service.AntiGravityService;
@@ -79,6 +81,12 @@ public class AIController {
 
         ProjectPlanResponseDto response = antiGravityService.generateProjectPlan(projectId, featureDescription);
 
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/generate-architecture")
+    public ResponseEntity<ArchitectureResponseDto> generateArchitecture(@RequestBody ArchitectureRequestDto request) {
+        ArchitectureResponseDto response = antiGravityService.generateArchitecture(request);
         return ResponseEntity.ok(response);
     }
 
