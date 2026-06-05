@@ -11,4 +11,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class DatabaseIntelligenceRequestDto {
     private String featureDescription;
+    private Long projectId;
 }
+

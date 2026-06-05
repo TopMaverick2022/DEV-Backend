@@ -71,7 +71,7 @@ public class AiController {
         if (idea == null || idea.isBlank()) {
             throw new IllegalArgumentException("Feature description is required");
         }
-        return ResponseEntity.ok(antiGravityService.generateDatabaseSchema(idea));
+        return ResponseEntity.ok(antiGravityService.generateDatabaseSchema(idea, body.getProjectId()));
     }
 
     /**
@@ -171,6 +171,7 @@ public class AiController {
         AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
         analysisRequest.setAnalysisType("refactor");
         analysisRequest.setCode(request.getCode());
+        analysisRequest.setProjectId(request.getProjectId());
         return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
     }
 
@@ -179,6 +180,7 @@ public class AiController {
         AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
         analysisRequest.setAnalysisType("security-scan");
         analysisRequest.setCode(request.getCode());
+        analysisRequest.setProjectId(request.getProjectId());
         return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
     }
 
@@ -187,6 +189,7 @@ public class AiController {
         AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
         analysisRequest.setAnalysisType("performance");
         analysisRequest.setCode(request.getCode());
+        analysisRequest.setProjectId(request.getProjectId());
         return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
     }
 
@@ -201,6 +204,7 @@ public class AiController {
         AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
         analysisRequest.setAnalysisType("test-generator");
         analysisRequest.setCode(request.getCode());
+        analysisRequest.setProjectId(request.getProjectId());
         return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
     }
 
@@ -209,6 +213,7 @@ public class AiController {
         AiAnalysisRequest analysisRequest = new AiAnalysisRequest();
         analysisRequest.setAnalysisType("generate-docs");
         analysisRequest.setCode(request.getCode());
+        analysisRequest.setProjectId(request.getProjectId());
         return ResponseEntity.ok(antiGravityService.analyzeCode(analysisRequest));
     }
 

@@ -642,7 +642,50 @@ public class AntiGravityService {
   // AI Architecture Generator
   // ─────────────────────────────────────────────────────────────────────────────
 
+  public String buildProjectContextPromptString(Long projectId) {
+    if (projectId == null) {
+      return "";
+    }
+    com.developerev.model.Project project = projectRepository.findById(projectId).orElse(null);
+    if (project == null) {
+      return "";
+    }
+    StringBuilder sb = new StringBuilder();
+    sb.append("\n=== GLOBAL SELECTED PROJECT CONTEXT ===\n");
+    sb.append("Project Name: ").append(project.getName()).append("\n");
+    if (project.getDescription() != null && !project.getDescription().isBlank()) {
+      sb.append("Project Description/Use Case: ").append(project.getDescription()).append("\n");
+    }
+    if (project.getLanguage() != null && !project.getLanguage().isBlank()) {
+      sb.append("Language: ").append(project.getLanguage());
+      if (project.getLanguageVersion() != null && !project.getLanguageVersion().isBlank()) {
+        sb.append(" (version: ").append(project.getLanguageVersion()).append(")");
+      }
+      sb.append("\n");
+    }
+    if (project.getFramework() != null && !project.getFramework().isBlank()) {
+      sb.append("Framework: ").append(project.getFramework());
+      if (project.getFrameworkVersion() != null && !project.getFrameworkVersion().isBlank()) {
+        sb.append(" (version: ").append(project.getFrameworkVersion()).append(")");
+      }
+      sb.append("\n");
+    }
+    if (project.getDatabaseName() != null && !project.getDatabaseName().isBlank()) {
+      sb.append("Database: ").append(project.getDatabaseName());
+      if (project.getDatabaseVersion() != null && !project.getDatabaseVersion().isBlank()) {
+        sb.append(" (version: ").append(project.getDatabaseVersion()).append(")");
+      }
+      sb.append("\n");
+    }
+    if (project.getDependencies() != null && !project.getDependencies().isBlank()) {
+      sb.append("Dependencies: ").append(project.getDependencies()).append("\n");
+    }
+    sb.append("=========================================\n");
+    return sb.toString();
+  }
+
   public ArchitectureResponseDto generateArchitecture(ArchitectureRequestDto request) {
+    String projectContext = buildProjectContextPromptString(request.getProjectId());
     String prompt = """
         You are a senior software architect.
         Return ONLY valid JSON. No markdown. No ``` markers. No explanations.
@@ -679,6 +722,7 @@ public class AntiGravityService {
             }
           ]
         }
+        """ + projectContext + """
         
         Idea / Requirements:
         """ + request.getIdea();
@@ -702,8 +746,8 @@ public class AntiGravityService {
   // AI Database Intelligence Engine
   // ─────────────────────────────────────────────────────────────────────────────
 
-  public DatabaseSchemaResponseDto generateDatabaseSchema(String featureDescription) {
-
+  public DatabaseSchemaResponseDto generateDatabaseSchema(String featureDescription, Long projectId) {
+    String projectContext = buildProjectContextPromptString(projectId);
     String prompt = """
         You are a senior database architect.
         
@@ -739,6 +783,7 @@ public class AntiGravityService {
             "INDEX idx_user_id ON Orders(user_id)"
           ]
         }
+        """ + projectContext + """
         
         Feature Description:
         """ + featureDescription;
@@ -780,7 +825,8 @@ public class AntiGravityService {
       throw new IllegalArgumentException("analysisType cannot be null");
     }
 
-    String knowledgeContext = knowledgeService.buildKnowledgePromptString();
+    String knowledgeContext = buildProjectContextPromptString(request.getProjectId()) + knowledgeService.buildKnowledgePromptString();
+
     String prompt = "";
 
     switch (type.toLowerCase()) {
