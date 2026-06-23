@@ -5,6 +5,7 @@ import com.developerev.service.AuthService;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
@@ -49,6 +50,9 @@ public class AuthController {
     @PostMapping("/refresh-token")
     public ResponseEntity<AuthResponse> refreshToken(HttpServletRequest request, HttpServletResponse response) {
         String refreshToken = extractRefreshTokenCookie(request);
+        if (refreshToken == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
         AuthResponse authResponse = authService.refreshToken(refreshToken);
         setRefreshTokenCookie(response, authResponse.getRefreshToken());
         authResponse.setRefreshToken(null);
@@ -60,7 +64,7 @@ public class AuthController {
         Cookie cookie = new Cookie("refreshToken", "");
         cookie.setHttpOnly(true);
         cookie.setSecure(false);
-        cookie.setPath("/api/auth");
+        cookie.setPath("/"); // must match the path used when setting the cookie
         cookie.setMaxAge(0);
         response.addCookie(cookie);
         return ResponseEntity.ok("Logged out successfully");
@@ -82,19 +86,19 @@ public class AuthController {
         Cookie cookie = new Cookie("refreshToken", token);
         cookie.setHttpOnly(true);
         cookie.setSecure(false); // set true in production (HTTPS)
-        cookie.setPath("/api/auth");
+        cookie.setPath("/"); // broad path so browser sends it on all requests to this origin
         cookie.setMaxAge(7 * 24 * 60 * 60); // 7 days
         response.addCookie(cookie);
     }
 
     private String extractRefreshTokenCookie(HttpServletRequest request) {
         if (request.getCookies() == null) {
-            throw new RuntimeException("No refresh token cookie found");
+            return null;
         }
         return Arrays.stream(request.getCookies())
                 .filter(c -> "refreshToken".equals(c.getName()))
                 .map(Cookie::getValue)
                 .findFirst()
-                .orElseThrow(() -> new RuntimeException("Refresh token cookie missing"));
+                .orElse(null);
     }
 }

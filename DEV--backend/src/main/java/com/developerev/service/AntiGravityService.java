@@ -680,24 +680,210 @@ public class AntiGravityService {
     if (project.getDependencies() != null && !project.getDependencies().isBlank()) {
       sb.append("Dependencies: ").append(project.getDependencies()).append("\n");
     }
+    // Inject deep AI-extracted business context if already analyzed
+    if (project.getAiBusinessContext() != null && !project.getAiBusinessContext().isBlank()) {
+      sb.append("\n--- Deep Business Context (AI-Extracted from Codebase) ---\n");
+      sb.append(project.getAiBusinessContext()).append("\n");
+      sb.append("----------------------------------------------------------\n");
+    }
     sb.append("=========================================\n");
     return sb.toString();
   }
 
+  /**
+   * Scans the actual project codebase file/folder structure and uses the LLM to
+   * deduce the real business domain, entities, and workflows. The result is stored
+   * in the project's aiBusinessContext column so that ALL subsequent AI requests
+   * (architecture, planner, explainer, etc.) automatically benefit from deep
+   * domain knowledge — without re-scanning on every request.
+   */
+  public String analyzeAndStoreProjectContext(Long projectId) {
+    com.developerev.model.Project project = projectRepository.findById(projectId)
+        .orElseThrow(() -> new RuntimeException("Project not found: " + projectId));
+
+    java.io.File repoDir = gitService.getRepoDir(projectId);
+    String fileStructure = directoryScannerService.getProjectStructure(repoDir.toPath());
+
+    if (fileStructure == null || fileStructure.isBlank()) {
+      throw new RuntimeException(
+          "No codebase found for this project. Please upload or clone the repository first.");
+    }
+
+    // Read a sample of key file contents to improve domain understanding
+    StringBuilder fileSamples = new StringBuilder();
+    try {
+      java.nio.file.Files.walk(repoDir.toPath())
+          .filter(p -> !java.nio.file.Files.isDirectory(p))
+          .filter(p -> {
+            String name = p.getFileName().toString().toLowerCase();
+            return name.endsWith(".java") || name.endsWith(".ts") || name.endsWith(".tsx")
+                || name.endsWith(".py") || name.endsWith(".js") || name.endsWith(".go")
+                || name.endsWith(".cs") || name.endsWith(".kt");
+          })
+          .limit(30) // Cap at 30 files to stay within token budget
+          .forEach(p -> {
+            try {
+              String content = java.nio.file.Files.readString(p);
+              // Take only the first 60 lines of each file (top-level declarations & imports)
+              String[] lines = content.split("\n");
+              int limit = Math.min(60, lines.length);
+              StringBuilder sample = new StringBuilder();
+              for (int i = 0; i < limit; i++) {
+                sample.append(lines[i]).append("\n");
+              }
+              fileSamples.append("\n--- ").append(repoDir.toPath().relativize(p)).append(" ---\n");
+              fileSamples.append(sample);
+            } catch (Exception ignored) {}
+          });
+    } catch (Exception e) {
+      log.warn("Could not read file samples for project {}: {}", projectId, e.getMessage());
+    }
+
+    String prompt = """
+        You are a senior software architect performing a deep codebase analysis.
+
+        Analyze the project file/folder structure and the code samples below.
+        Your goal is to deduce:
+        1. The core business domain (e.g. Travel Booking, E-Commerce, Healthcare)
+        2. The main entities/models and what they represent (e.g. Traveler, Flight, Booking, Hotel)
+        3. The key workflows and processes (e.g. user books a flight, payment is processed, confirmation is sent)
+        4. The major services/modules and their responsibilities
+        5. Any external integrations or APIs present
+
+        Write a concise, dense business context summary in plain English (max 400 words).
+        This summary will be injected into every AI prompt for this project.
+        Do NOT include technical jargon that isn't domain-specific.
+        Focus on WHAT the system does for its users, not HOW it is implemented.
+        Do not include any markdown headers or formatting.
+
+        Project File Structure:
+        """ + fileStructure + """
+
+        Code Samples (first 60 lines of up to 30 files):
+        """ + fileSamples;
+
+    log.info("Calling AI to extract deep business context for project {}", projectId);
+    String aiResponse = aiClient.generateContent(prompt);
+
+    String cleanedContext = aiResponse
+        .replace("```", "")
+        .trim();
+
+    project.setAiBusinessContext(cleanedContext);
+    projectRepository.save(project);
+
+    log.info("Stored AI business context for project {}: {} chars", projectId, cleanedContext.length());
+    activityLogService.logCurrentUserActivity(projectId, "Analyzed Codebase", "AI extracted deep business context from codebase.");
+
+    return cleanedContext;
+  }
+
+  /**
+   * Classifies a project as FRONTEND, BACKEND, FULLSTACK, or UNKNOWN
+   * by inspecting the stored language and framework fields.
+   *
+   * Frontend signals:  React, Angular, Vue, Next.js, Nuxt, Svelte, Gatsby, Vite (+TS/JS)
+   * Backend signals:   Spring Boot, Django, FastAPI, Express, Laravel, Rails, ASP.NET, Gin, NestJS (server-side)
+   * Fullstack:         Next.js with API routes, Nuxt, SvelteKit, or if both frontend+backend deps appear
+   */
+  private String detectProjectType(Long projectId) {
+    if (projectId == null) return "BACKEND";
+    com.developerev.model.Project project = projectRepository.findById(projectId).orElse(null);
+    if (project == null) return "BACKEND";
+
+    String framework = project.getFramework() != null ? project.getFramework().toLowerCase() : "";
+    String language  = project.getLanguage()  != null ? project.getLanguage().toLowerCase()  : "";
+    String deps      = project.getDependencies() != null ? project.getDependencies().toLowerCase() : "";
+    String combined  = framework + " " + language + " " + deps;
+
+    // Pure frontend frameworks
+    boolean isFrontend = combined.matches(".*\\b(react|angular|vue|svelte|gatsby|vite|ionic|flutter|react native|expo)\\b.*")
+        && !combined.matches(".*\\b(spring|django|fastapi|express|laravel|rails|asp\\.net|gin|nestjs|hapi|koa|flask|quarkus|micronaut|struts|play framework)\\b.*");
+
+    // Fullstack frameworks (have both UI and server-side rendering/API)
+    boolean isFullstack = combined.matches(".*\\b(next\\.?js|nextjs|nuxt|sveltekit|remix|blitz|redwood)\\b.*");
+
+    // Explicit backend signals
+    boolean isBackend = combined.matches(".*\\b(spring|spring boot|django|fastapi|express|laravel|rails|asp\\.net|gin|nestjs|hapi|koa|flask|quarkus|micronaut|struts|play framework|actix|axum|fiber)\\b.*");
+
+    if (isFullstack) return "FULLSTACK";
+    if (isFrontend)  return "FRONTEND";
+    if (isBackend)   return "BACKEND";
+
+    // Fallback: TypeScript/JavaScript projects without explicit framework → likely frontend
+    if (language.contains("typescript") || language.contains("javascript")) {
+      return "FRONTEND";
+    }
+
+    return "BACKEND"; // Java, Python, Go, C#, etc. → backend by default
+  }
+
   public ArchitectureResponseDto generateArchitecture(ArchitectureRequestDto request) {
     String projectContext = buildProjectContextPromptString(request.getProjectId());
+
+    // ── Detect project type from tech stack ───────────────────────────────────
+    String projectType = detectProjectType(request.getProjectId());
+
+    // ── Build a type-specific prompt ──────────────────────────────────────────
+    String typeSpecificInstructions;
+    if ("FRONTEND".equals(projectType)) {
+      typeSpecificInstructions = """
+          Design a FRONTEND application architecture diagram.
+
+          This is a frontend/UI project. Do NOT generate backend microservices, database nodes, or server-side services.
+          Instead, model the architecture of the frontend application itself:
+
+          "services" = UI Modules / Pages / Feature Areas (e.g. "LoginPage", "DashboardModule", "CartPage", "AuthStore", "ApiService")
+            - "database" field should be "none" for all UI modules.
+            - For state management stores (Redux, Zustand, Context), use the store name (e.g. "AuthContext", "CartStore").
+
+          "apis" = Backend API calls consumed by this frontend (list the actual HTTP endpoints this UI calls)
+            - Use the HTTP method and realistic endpoint paths.
+
+          "events" = Data flows and user interaction flows between frontend modules
+            (e.g. user logs in → AuthStore updates → DashboardModule re-renders)
+            - "producer" and "consumer" must be exact names from "services".
+            - Name events as user/data flows, e.g. "UserLoginFlow", "CartUpdatedEvent", "AuthTokenStored".
+
+          STRICT RULES:
+          1. Every "producer" and "consumer" in "events" MUST be copied character-for-character from a "name" value in "services".
+          2. Do NOT generate any backend services, databases, or server-side components.
+          3. Focus on pages, components, state managers, API service layers, and routing.
+          4. Use short, clear module names (e.g. "LoginPage", "ProductList", "AuthStore", "ApiService").
+          """;
+    } else if ("FULLSTACK".equals(projectType)) {
+      typeSpecificInstructions = """
+          Design a FULLSTACK application architecture diagram showing BOTH the frontend and backend tiers.
+
+          Include both:
+          - Frontend modules (Pages, Components, State stores, API service layers) — set "database" to "none"
+          - Backend services with their databases
+          - Clear data flow events between frontend and backend layers
+
+          STRICT RULES:
+          1. Every "producer" and "consumer" in "events" MUST be copied character-for-character from a "name" value in "services".
+          2. Clearly separate frontend modules (suffix: "Page", "Component", "Store") from backend services (suffix: "Service", "Controller").
+          3. Every service must connect to at least one event.
+          """;
+    } else {
+      // Default: BACKEND / UNKNOWN
+      typeSpecificInstructions = """
+          Design a BACKEND microservice architecture for the given idea.
+
+          STRICT RULES:
+          1. Every "producer" and "consumer" in "events" MUST be copied character-for-character from a "name" value in "services".
+          2. Do NOT invent new names for producers or consumers. Only reuse existing service names.
+          3. Every service must connect to at least one event (as producer OR consumer).
+          4. Use short, clear service names (e.g. "AuthService", "OrderService").
+          """;
+    }
+
     String prompt = """
         You are a senior software architect.
         Return ONLY valid JSON. No markdown. No ``` markers. No explanations.
 
-        Design a microservice architecture for the given idea.
-        
-        STRICT RULES:
-        1. Every "producer" and "consumer" in "events" MUST be copied character-for-character from a "name" value in "services".
-        2. Do NOT invent new names for producers or consumers. Only reuse existing service names.
-        3. Every service must connect to at least one event (as producer OR consumer).
-        4. Use short, clear service names (e.g. "AuthService", "OrderService").
-        
+        """ + typeSpecificInstructions + """
+
         Response Format:
         {
           "services": [
@@ -723,9 +909,10 @@ public class AntiGravityService {
           ]
         }
         """ + projectContext + """
-        
+
         Idea / Requirements:
         """ + request.getIdea();
+
 
     String aiResponse = aiClient.generateContent(prompt);
 

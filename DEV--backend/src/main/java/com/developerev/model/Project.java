@@ -47,6 +47,9 @@ public class Project {
     @Column(columnDefinition = "TEXT")
     private String dependencies;
 
+    @Column(name = "ai_business_context", columnDefinition = "TEXT")
+    private String aiBusinessContext;
+
     @Column(name = "last_analyzed_commit")
     private String lastAnalyzedCommit;
 

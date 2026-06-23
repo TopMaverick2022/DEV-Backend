@@ -15,6 +15,7 @@ import java.util.List;
 public class ProjectController {
 
     private final ProjectService projectService;
+    private final com.developerev.service.AntiGravityService antiGravityService;
 
     @PostMapping
     public ResponseEntity<Project> createProject(@RequestBody Project project, Authentication authentication) {
@@ -70,5 +71,12 @@ public class ProjectController {
         String username = authentication.getName();
         return ResponseEntity.ok(projectService.getProjectStats(id, username));
     }
-}
 
+    @PostMapping("/{id}/analyze-business-context")
+    public ResponseEntity<java.util.Map<String, String>> analyzeBusinessContext(
+            @PathVariable("id") Long id,
+            Authentication authentication) {
+        String context = antiGravityService.analyzeAndStoreProjectContext(id);
+        return ResponseEntity.ok(java.util.Map.of("aiBusinessContext", context));
+    }
+}
