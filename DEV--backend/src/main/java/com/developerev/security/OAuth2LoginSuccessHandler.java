@@ -103,7 +103,7 @@ public class OAuth2LoginSuccessHandler implements AuthenticationSuccessHandler {
             user.setVerified(true);
             userRepository.save(user);
 
-            emailService.sendEmail(user.getEmail(), "Welcome to DeveloperEV!",
+            emailService.sendNotificationEmail(user.getEmail(), "Welcome to DeveloperEV!",
                     "Hello " + (name != null ? name : user.getUsername())
                             + ",\n\nWelcome to DeveloperEV! Your account has been successfully created via "
                             + provider + ". We're excited to have you on board!");

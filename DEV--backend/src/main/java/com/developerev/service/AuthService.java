@@ -104,7 +104,7 @@ public class AuthService {
         String otp = generateOtp();
         createVerificationToken(user, otp, VerificationToken.TokenType.EMAIL_VERIFICATION);
 
-        emailService.sendEmail(user.getEmail(), "DeveloperEV - Verify your email",
+        emailService.sendOtpEmail(user.getEmail(), "DeveloperEV - Verify your email",
                 "Your verification code is: " + otp);
     }
 
@@ -157,7 +157,7 @@ public class AuthService {
         verificationTokenRepository.delete(token);
 
         // Send welcome email
-        emailService.sendEmail(user.getEmail(), "Welcome to DeveloperEV!",
+        emailService.sendNotificationEmail(user.getEmail(), "Welcome to DeveloperEV!",
                 "Hello " + (user.getUsername() != null ? user.getUsername() : "there")
                         + ",\n\nWelcome to DeveloperEV! Your account has been successfully verified. We're excited to have you on board!");
     }
@@ -175,7 +175,7 @@ public class AuthService {
         String otp = generateOtp();
         createVerificationToken(user, otp, VerificationToken.TokenType.EMAIL_VERIFICATION);
 
-        emailService.sendEmail(user.getEmail(), "DeveloperEV - Verify your email",
+        emailService.sendOtpEmail(user.getEmail(), "DeveloperEV - Verify your email",
                 "Your new verification code is: " + otp);
     }
 
@@ -206,7 +206,7 @@ public class AuthService {
         String otp = generateOtp();
         createVerificationToken(user, otp, VerificationToken.TokenType.PASSWORD_RESET);
 
-        emailService.sendEmail(user.getEmail(), "DeveloperEV - Password Reset",
+        emailService.sendOtpEmail(user.getEmail(), "DeveloperEV - Password Reset",
                 "Your password reset code is: " + otp);
     }
 
@@ -250,7 +250,7 @@ public class AuthService {
         verificationTokenRepository.delete(token);
 
         // Send password change success email
-        emailService.sendEmail(user.getEmail(), "DeveloperEV - Password Changed Successfully",
+        emailService.sendNotificationEmail(user.getEmail(), "DeveloperEV - Password Changed Successfully",
                 "Hello " + user.getUsername()
                         + ",\n\nYour password has been successfully changed. If you did not perform this action, please contact support immediately.");
     }
