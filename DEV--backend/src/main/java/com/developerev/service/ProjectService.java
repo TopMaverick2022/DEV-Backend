@@ -152,11 +152,89 @@ public class ProjectService {
         Project project = projectRepository.findByIdAndOwner(projectId, user)
                 .orElseThrow(() -> new RuntimeException("Project not found or you are not the owner"));
 
+        // If this project was linked, also clear the other side
+        if (project.getRelatedProjectId() != null) {
+            projectRepository.findById(project.getRelatedProjectId()).ifPresent(related -> {
+                related.setRelatedProjectId(null);
+                projectRepository.save(related);
+            });
+        }
+
         // Delete child records first to satisfy FK constraints
         activityLogRepository.deleteByProjectId(projectId);
         projectMemberRepository.deleteByProjectId(projectId);
 
         projectRepository.delete(project);
+    }
+
+    // ── Linked Project (Bidirectional) ─────────────────────────────────────────
+
+    /**
+     * Links two projects bidirectionally:
+     *   projectId.relatedProjectId = relatedId
+     *   relatedId.relatedProjectId = projectId
+     * Also infers projectType if not already set to FRONTEND or BACKEND.
+     */
+    @Transactional
+    public Project linkProjects(Long projectId, Long relatedProjectId, String username) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project not found: " + projectId));
+        Project related = projectRepository.findById(relatedProjectId)
+                .orElseThrow(() -> new RuntimeException("Related project not found: " + relatedProjectId));
+
+        // Set bidirectional references
+        project.setRelatedProjectId(relatedProjectId);
+        related.setRelatedProjectId(projectId);
+
+        // Auto-assign project types if not already set
+        if ("STANDALONE".equals(project.getProjectType()) || project.getProjectType() == null) {
+            project.setProjectType("FRONTEND");
+        }
+        if ("STANDALONE".equals(related.getProjectType()) || related.getProjectType() == null) {
+            related.setProjectType("BACKEND");
+        }
+
+        projectRepository.save(related);
+        Project saved = projectRepository.save(project);
+        activityLogService.logActivity(
+                userRepository.findByUsername(username).orElse(null),
+                saved, "Linked Projects",
+                "Linked to project: " + related.getName());
+        return saved;
+    }
+
+    /**
+     * Removes the bidirectional link between a project and its companion.
+     */
+    @Transactional
+    public Project unlinkProject(Long projectId, String username) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new RuntimeException("Project not found: " + projectId));
+
+        if (project.getRelatedProjectId() != null) {
+            projectRepository.findById(project.getRelatedProjectId()).ifPresent(related -> {
+                related.setRelatedProjectId(null);
+                related.setProjectType("STANDALONE");
+                projectRepository.save(related);
+            });
+        }
+
+        project.setRelatedProjectId(null);
+        project.setProjectType("STANDALONE");
+        Project saved = projectRepository.save(project);
+        activityLogService.logActivity(
+                userRepository.findByUsername(username).orElse(null),
+                saved, "Unlinked Project", "Removed project pairing");
+        return saved;
+    }
+
+    /**
+     * Fetches the companion project for a given project, or empty if not linked.
+     */
+    public java.util.Optional<Project> getLinkedProject(Long projectId) {
+        return projectRepository.findById(projectId)
+                .filter(p -> p.getRelatedProjectId() != null)
+                .flatMap(p -> projectRepository.findById(p.getRelatedProjectId()));
     }
 
     private ProjectMember getOrAssignAdminMember(Project project, User user) {
@@ -183,7 +261,7 @@ public class ProjectService {
 
     public com.developerev.dto.ProjectStatsDto getProjectStats(Long projectId, String username) {
         Project project = projectRepository.findById(projectId)
-                .orElseThrow(() -> new RuntimeException("Project not found"));
+                .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException("Project not found"));
         getOrAssignAdminMember(project, userRepository.findByUsername(username).orElseThrow());
 
         int bugs = 0, security = 0, perf = 0;

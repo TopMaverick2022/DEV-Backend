@@ -63,15 +63,46 @@ public class AntiGravityService {
     if (project != null && project.getLanguage() != null) {
       stackContext = String.format("""
           Project Stack Context:
+          - Project Type: %s
           - Language: %s (version: %s)
           - Framework: %s (version: %s)
           - Database: %s (version: %s)
           - Selected Dependencies: %s
           """,
+          project.getProjectType(),
           project.getLanguage(), project.getLanguageVersion(),
           project.getFramework(), project.getFrameworkVersion(),
           project.getDatabaseName(), project.getDatabaseVersion(),
           project.getDependencies());
+    }
+
+    // Inject linked project context when a companion project exists
+    String linkedContext = "";
+    if (project != null && project.getRelatedProjectId() != null) {
+      com.developerev.model.Project linked = projectRepository.findById(project.getRelatedProjectId()).orElse(null);
+      if (linked != null) {
+        String companion = "FRONTEND".equals(project.getProjectType()) ? "Backend" : "Frontend";
+        linkedContext = String.format("""
+
+          Linked %s Project Context (this feature may span both projects — understand the full connectivity pipeline):
+          - Project Name: %s
+          - Project Type: %s
+          - Language: %s (version: %s)
+          - Framework: %s (version: %s)
+          - Database: %s (version: %s)
+          - Dependencies: %s
+          %s
+          """,
+            companion,
+            linked.getName(), linked.getProjectType(),
+            linked.getLanguage(), linked.getLanguageVersion(),
+            linked.getFramework(), linked.getFrameworkVersion(),
+            linked.getDatabaseName(), linked.getDatabaseVersion(),
+            linked.getDependencies(),
+            (linked.getAiBusinessContext() != null
+                ? "- AI Business Understanding: " + linked.getAiBusinessContext()
+                : ""));
+      }
     }
 
     String prompt = """
@@ -102,7 +133,7 @@ public class AntiGravityService {
           ]
         }
 
-        """ + stackContext + "\nFeature:\n" + featureDescription;
+        """ + stackContext + linkedContext + "\nFeature:\n" + featureDescription;
 
     String aiResponse = aiClient.generateContent(prompt);
 
@@ -186,15 +217,45 @@ public class AntiGravityService {
     if (project != null && project.getLanguage() != null) {
       stackInfo = String.format("""
           Project Tech Stack Context:
+          - Project Type: %s
           - Language: %s (version: %s)
           - Framework: %s (version: %s)
           - Database: %s (version: %s)
           - Base Stack Dependencies: %s
-          """, 
+          """,
+          project.getProjectType(),
           project.getLanguage(), project.getLanguageVersion(),
           project.getFramework(), project.getFrameworkVersion(),
           project.getDatabaseName(), project.getDatabaseVersion(),
           project.getDependencies());
+    }
+
+    // Inject linked project context for cross-project implementation awareness
+    String linkedStackInfo = "";
+    if (project != null && project.getRelatedProjectId() != null) {
+      com.developerev.model.Project linked = projectRepository.findById(project.getRelatedProjectId()).orElse(null);
+      if (linked != null) {
+        String companion = "FRONTEND".equals(project.getProjectType()) ? "Backend" : "Frontend";
+        linkedStackInfo = String.format("""
+
+          Linked %s Project (understand API contracts, data models, and connectivity when implementing):
+          - Name: %s (%s project)
+          - Language: %s (version: %s)
+          - Framework: %s (version: %s)
+          - Database: %s (version: %s)
+          - Dependencies: %s
+          %s
+          """,
+            companion,
+            linked.getName(), linked.getProjectType(),
+            linked.getLanguage(), linked.getLanguageVersion(),
+            linked.getFramework(), linked.getFrameworkVersion(),
+            linked.getDatabaseName(), linked.getDatabaseVersion(),
+            linked.getDependencies(),
+            (linked.getAiBusinessContext() != null
+                ? "- AI Business Context: " + linked.getAiBusinessContext()
+                : ""));
+      }
     }
 
     String featureNeedsInfo = "";
@@ -234,7 +295,7 @@ public class AntiGravityService {
           ]
         }
         
-        """ + stackInfo + featureNeedsInfo + projectStructureInfo + """
+        """ + stackInfo + linkedStackInfo + featureNeedsInfo + projectStructureInfo + """
         
         Feature Description:
         """ + feature.getDescription() + "\n\nTasks:\n" + taskList.toString();
