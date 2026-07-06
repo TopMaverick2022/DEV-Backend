@@ -12,6 +12,20 @@ public class ProjectPlanResponseDto {
     private List<String> detectedNeeds;
     private List<TaskDto> tasks;
 
+    /**
+     * AI-assessed implementation status of this feature:
+     *   FRESH    – no existing code detected, safe to create from scratch
+     *   PARTIAL  – feature is partially implemented; tasks cover the remaining balance
+     *   EXISTS   – feature appears to already be fully or substantially implemented
+     */
+    private String analysisStatus;
+
+    /**
+     * A friendly, developer-facing message from the AI explaining what was found
+     * in the existing codebase and what it suggests. Shown to the user before committing.
+     */
+    private String suggestion;
+
     @Data
     public static class TaskDto {
         private Long id;

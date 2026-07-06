@@ -355,8 +355,8 @@ public class AntiGravityService {
 
     // ── Auto-detect stack from cloned repo if fields are empty ─────────────────
     // This handles projects imported via Git clone with no manually filled fields.
+    java.io.File repoDir = gitService.getRepoDir(projectId);
     if (project != null && (project.getLanguage() == null || project.getLanguage().isBlank())) {
-      java.io.File repoDir = gitService.getRepoDir(projectId);
       DetectedStack detected = detectStackFromRepo(repoDir, project);
       // Reload after persistence
       if (detected.hasLanguage()) {
@@ -416,6 +416,43 @@ public class AntiGravityService {
       }
     }
 
+    // Gather codebase knowledge to figure out what is already implemented
+    String projectKnowledgeContext = "";
+    if (repoDir != null && repoDir.exists()) {
+      try {
+        String projectStructure = directoryScannerService.getProjectStructure(repoDir.toPath());
+        if (projectStructure != null && !projectStructure.isEmpty()) {
+          projectKnowledgeContext += "\nExisting Project File/Folder Structure:\n" + projectStructure + "\n";
+          
+          StringBuilder codebaseBuilder = new StringBuilder();
+          java.nio.file.Files.walk(repoDir.toPath())
+              .filter(java.nio.file.Files::isRegularFile)
+              .filter(p -> {
+                  String name = p.getFileName().toString().toLowerCase();
+                  return name.endsWith(".java") || name.endsWith(".ts") || name.endsWith(".tsx") || name.endsWith(".py") 
+                         || name.endsWith(".php") || name.endsWith(".go") || name.endsWith(".js") || name.endsWith(".css") 
+                         || name.endsWith(".html") || name.endsWith(".json") || name.endsWith(".xml");
+              })
+              .forEach(p -> {
+                  try {
+                      String content = java.nio.file.Files.readString(p);
+                      codebaseBuilder.append("\n--- ").append(repoDir.toPath().relativize(p).toString().replace("\\", "/")).append(" ---\n");
+                      codebaseBuilder.append(content).append("\n");
+                  } catch (Exception ignored) {}
+              });
+          
+          String fullCode = codebaseBuilder.toString();
+          // Safety cutoff (1 Million chars is ~250k tokens, which is well within Gemini's 2M limit)
+          if (fullCode.length() > 1000000) {
+              fullCode = fullCode.substring(0, 1000000) + "\n... (Codebase truncated due to size)";
+          }
+          projectKnowledgeContext += "\nExisting Project Source Code:\n" + fullCode + "\n";
+        }
+      } catch (Exception e) {
+        log.warn("Failed to load project knowledge context", e);
+      }
+    }
+
     // Build a hard mandatory language constraint line placed FIRST in the prompt
     // so the AI cannot drift to another language/framework
     String mandatoryStackLine = "";
@@ -432,22 +469,32 @@ public class AntiGravityService {
 
     String prompt = mandatoryStackLine + """
 
-        You are a senior software architect.
+        You are a senior software architect with deep knowledge of codebases.
         Return ONLY valid JSON.
         Do not wrap the response in markdown.
         Do not include ```json or ``` markers.
         No explanations. No markdown formatting.
 
-        Based on the feature description and project stack context below, plan the tasks needed.
-        ALL tasks must be designed for the project's exact language and framework specified above.
-        auto-detect all the specific libraries, dependencies, framework modules, or tools needed
-        for this feature (compatible with the project stack) and return them in "detectedNeeds".
+        TASK: Analyze the existing project codebase thoroughly. Then produce a smart, context-aware implementation plan for the feature described below.
+
+        ANALYSIS RULES:
+        1. Read the 'Existing Project Source Code' section carefully.
+        2. Determine if the requested feature is: NOT started (FRESH), partially started (PARTIAL), or mostly/fully done (EXISTS).
+        3. Set 'analysisStatus' to one of: "FRESH", "PARTIAL", or "EXISTS".
+        4. In 'suggestion', write a short, friendly developer note (2-4 sentences) explaining what you found in the existing code and what you recommend. Be warm and specific — e.g. "Hey! I noticed the payment controller already exists with Razorpay integration. The webhook handler and refund flow look incomplete though — the plan below covers only those remaining pieces."
+        5. For FRESH: plan all tasks from scratch.
+        6. For PARTIAL: plan ONLY the remaining/missing work. Do NOT repeat already completed work.
+        7. For EXISTS: still produce a minimal task list (e.g. improvements, edge-case handling, tests) but make 'suggestion' clearly state the feature is largely done.
+        8. ALL tasks must be designed for the project's exact language and framework specified above.
+        9. Auto-detect all the specific libraries, dependencies, framework modules, or tools needed for this feature and return them in "detectedNeeds".
 
         Response Format:
         {
           "featureName": "",
           "complexity": "",
           "totalEstimatedHours": 0,
+          "analysisStatus": "FRESH",
+          "suggestion": "Short friendly message about what was found and what the plan covers.",
           "detectedNeeds": [
              "Dependency Name/Tool Name"
           ],
@@ -462,7 +509,9 @@ public class AntiGravityService {
           ]
         }
 
-        """ + stackContext + linkedContext + "\nFeature:\n" + featureDescription;
+        """ + stackContext + linkedContext + projectKnowledgeContext + "\nFeature:\n" + featureDescription;
+
+
 
     String aiResponse = aiClient.generateContent(prompt);
 
@@ -634,16 +683,18 @@ public class AntiGravityService {
     // 2. Build prompt
     String prompt = mandatoryImpl + """
 
-        You are a senior full-stack developer. Your task is to implement the code for a specific feature based on the plan, tech stack, existing project file/folder structure, and detected dependencies/needs provided.
+        You are a senior full-stack developer. Your task is to implement the ACTUAL SOURCE CODE for a specific feature based on the plan, tech stack, existing project file/folder structure, and detected dependencies/needs provided.
 
         CRITICAL RULES — READ BEFORE GENERATING ANYTHING:
         1. Write ONLY in the language and framework specified in the MANDATORY constraint above.
         2. Every file extension must match that language (e.g. .java for Java, .ts/.tsx for TypeScript, .py for Python, .php for PHP, .go for Go).
-        3. If the project is Java/Spring Boot — write Java. Never write Python, PHP, JS, TS, etc.
-        4. If the project is TypeScript/React — write TypeScript. Never write Java, PHP, etc.
-        5. If the project is PHP/Laravel — write PHP. Never write Java, Python, TypeScript, etc.
-        6. Align all generated file paths with the existing project structure shown below.
-        7. If an existing file (pom.xml, build.gradle, package.json, composer.json, config) needs updating, use its exact path.
+        3. DO NOT output a single markdown (.md) file. You MUST generate separate, individual source code files. Markdown files are strictly forbidden unless it is explicitly a README update.
+        4. DO NOT wrap the code in the 'content' field with markdown code blocks (e.g., ```java). The 'content' field must contain ONLY the raw, compilable/executable source code.
+        5. If the project is Java/Spring Boot — write Java. Never write Python, PHP, JS, TS, etc.
+        6. If the project is TypeScript/React — write TypeScript. Never write Java, PHP, etc.
+        7. If the project is PHP/Laravel — write PHP. Never write Java, Python, TypeScript, etc.
+        8. Align all generated file paths with the existing project structure shown below.
+        9. If an existing file (pom.xml, build.gradle, package.json, composer.json, config) needs updating, use its exact path.
 
         Analyze the existing project file/folder structure below. Align any new or modified files perfectly with this structure. For example, if there is a module/subdirectory (e.g., `DEV--backend`) containing the project codebase, make sure the paths in the generated JSON are nested correctly inside that subdirectory (e.g., starting with `DEV--backend/src/...`) rather than at the root level, so they integrate perfectly.
 
