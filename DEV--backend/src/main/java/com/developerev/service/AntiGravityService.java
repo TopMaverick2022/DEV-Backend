@@ -56,24 +56,335 @@ public class AntiGravityService {
   private final GitService gitService;
   private final com.developerev.repository.ProjectRepository projectRepository;
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Auto Stack Detection from Cloned Repo
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Detects language, framework, and version by inspecting build/config files
+   * inside the cloned repo directory. Used as a fallback when the project's
+   * language/framework fields are blank (e.g. project imported by Git clone).
+   *
+   * Detects: Java/Maven(Spring Boot), Java/Gradle, TypeScript/React, TypeScript/Next.js,
+   * TypeScript/Angular, TypeScript/Vue, TypeScript/NestJS, JavaScript/Node,
+   * Python/Django, Python/FastAPI, Python/Flask, Go, Rust/Actix, C#/.NET,
+   * Ruby/Rails, PHP/Laravel, Dart/Flutter.
+   *
+   * Also persists detected values back to the project row so future calls
+   * skip this scan entirely.
+   */
+  private DetectedStack detectStackFromRepo(java.io.File repoDir, com.developerev.model.Project project) {
+    if (repoDir == null || !repoDir.exists()) return new DetectedStack("", "", "");
+
+    try {
+      // ── pom.xml → Java / Maven ──────────────────────────────────────────────
+      java.io.File pom = new java.io.File(repoDir, "pom.xml");
+      if (!pom.exists()) {
+        // Check one level deeper (e.g. monorepo with a backend subfolder)
+        pom = java.nio.file.Files.walk(repoDir.toPath(), 2)
+            .filter(p -> p.getFileName().toString().equals("pom.xml"))
+            .map(java.nio.file.Path::toFile)
+            .findFirst().orElse(null);
+      }
+      if (pom != null && pom.exists()) {
+        String content = java.nio.file.Files.readString(pom.toPath());
+        String version = extractMavenJavaVersion(content);
+        String framework = "";
+        if (content.contains("spring-boot")) framework = "Spring Boot";
+        else if (content.contains("quarkus"))   framework = "Quarkus";
+        else if (content.contains("micronaut")) framework = "Micronaut";
+        persistDetectedStack(project, "Java", framework, version);
+        return new DetectedStack("Java", framework, version);
+      }
+
+      // ── build.gradle → Java or Kotlin / Gradle ──────────────────────────────
+      java.io.File gradle = findFile(repoDir, "build.gradle", 2);
+      java.io.File gradleKts = findFile(repoDir, "build.gradle.kts", 2);
+      java.io.File gradleFile = gradleKts != null ? gradleKts : gradle;
+      if (gradleFile != null) {
+        String content = java.nio.file.Files.readString(gradleFile.toPath());
+        String lang = gradleFile.getName().endsWith(".kts") ? "Kotlin" : "Java";
+        String framework = "";
+        if (content.contains("spring-boot"))   framework = "Spring Boot";
+        else if (content.contains("quarkus"))  framework = "Quarkus";
+        persistDetectedStack(project, lang, framework, "");
+        return new DetectedStack(lang, framework, "");
+      }
+
+      // ── composer.json → PHP / Laravel ────────────────────────────────────────
+      java.io.File composer = findFile(repoDir, "composer.json", 2);
+      if (composer != null) {
+        String content = java.nio.file.Files.readString(composer.toPath()).toLowerCase();
+        String framework = "";
+        if (content.contains("laravel/framework"))      framework = "Laravel";
+        else if (content.contains("symfony/symfony"))  framework = "Symfony";
+        persistDetectedStack(project, "PHP", framework, "");
+        return new DetectedStack("PHP", framework, "");
+      }
+
+      // ── package.json → TypeScript or JavaScript ──────────────────────────────
+      java.io.File pkg = findFile(repoDir, "package.json", 2);
+      if (pkg != null) {
+        String content = java.nio.file.Files.readString(pkg.toPath());
+        // TypeScript if tsconfig exists alongside, or ts in deps
+        boolean hasTs = content.contains("\"typescript\"") || findFile(repoDir, "tsconfig.json", 2) != null;
+        String lang = hasTs ? "TypeScript" : "JavaScript";
+        String framework = "";
+        String version = "";
+        if (content.contains("\"next\""))          { framework = "Next.js";  version = extractNpmVersion(content, "next"); }
+        else if (content.contains("\"react\""))    { framework = "React";    version = extractNpmVersion(content, "react"); }
+        else if (content.contains("\"@angular")   ) { framework = "Angular"; }
+        else if (content.contains("\"vue\""))      { framework = "Vue.js";   version = extractNpmVersion(content, "vue"); }
+        else if (content.contains("\"@nestjs")     ) { framework = "NestJS"; }
+        else if (content.contains("\"svelte\""))   { framework = "Svelte"; }
+        else if (content.contains("\"express\""))  { framework = "Express"; }
+        else if (content.contains("\"fastify\""))  { framework = "Fastify"; }
+        persistDetectedStack(project, lang, framework, version);
+        return new DetectedStack(lang, framework, version);
+      }
+
+      // ── requirements.txt / pyproject.toml → Python ──────────────────────────
+      java.io.File req = findFile(repoDir, "requirements.txt", 2);
+      java.io.File pyproject = findFile(repoDir, "pyproject.toml", 2);
+      String pyContent = "";
+      if (req != null) pyContent += java.nio.file.Files.readString(req.toPath()).toLowerCase();
+      if (pyproject != null) pyContent += java.nio.file.Files.readString(pyproject.toPath()).toLowerCase();
+      if (!pyContent.isBlank()) {
+        String framework = "";
+        if (pyContent.contains("django"))       framework = "Django";
+        else if (pyContent.contains("fastapi")) framework = "FastAPI";
+        else if (pyContent.contains("flask"))   framework = "Flask";
+        else if (pyContent.contains("tornado")) framework = "Tornado";
+        persistDetectedStack(project, "Python", framework, "");
+        return new DetectedStack("Python", framework, "");
+      }
+
+      // ── go.mod → Go ──────────────────────────────────────────────────────────
+      java.io.File goMod = findFile(repoDir, "go.mod", 2);
+      if (goMod != null) {
+        String content = java.nio.file.Files.readString(goMod.toPath()).toLowerCase();
+        String framework = "";
+        if (content.contains("github.com/gin-gonic"))  framework = "Gin";
+        else if (content.contains("github.com/gofiber")) framework = "Fiber";
+        else if (content.contains("github.com/labstack")) framework = "Echo";
+        String goVersion = "";
+        for (String line : content.split("\n")) {
+          if (line.startsWith("go ")) { goVersion = line.replace("go ", "").trim(); break; }
+        }
+        persistDetectedStack(project, "Go", framework, goVersion);
+        return new DetectedStack("Go", framework, goVersion);
+      }
+
+      // ── Cargo.toml → Rust ────────────────────────────────────────────────────
+      java.io.File cargo = findFile(repoDir, "Cargo.toml", 2);
+      if (cargo != null) {
+        String content = java.nio.file.Files.readString(cargo.toPath()).toLowerCase();
+        String framework = "";
+        if (content.contains("actix"))  framework = "Actix-web";
+        else if (content.contains("axum")) framework = "Axum";
+        else if (content.contains("rocket")) framework = "Rocket";
+        persistDetectedStack(project, "Rust", framework, "");
+        return new DetectedStack("Rust", framework, "");
+      }
+
+      // ── *.csproj → C# / .NET ─────────────────────────────────────────────────
+      java.util.Optional<java.nio.file.Path> csproj = java.nio.file.Files.walk(repoDir.toPath(), 3)
+          .filter(p -> p.toString().endsWith(".csproj")).findFirst();
+      if (csproj.isPresent()) {
+        String content = java.nio.file.Files.readString(csproj.get()).toLowerCase();
+        String framework = content.contains("aspnet") || content.contains("microsoft.aspnetcore") ? "ASP.NET Core" : "";
+        persistDetectedStack(project, "C#", framework, "");
+        return new DetectedStack("C#", framework, "");
+      }
+
+      // ── Gemfile → Ruby ───────────────────────────────────────────────────────
+      java.io.File gemfile = findFile(repoDir, "Gemfile", 2);
+      if (gemfile != null) {
+        String content = java.nio.file.Files.readString(gemfile.toPath()).toLowerCase();
+        String framework = content.contains("rails") ? "Ruby on Rails" : content.contains("sinatra") ? "Sinatra" : "";
+        persistDetectedStack(project, "Ruby", framework, "");
+        return new DetectedStack("Ruby", framework, "");
+      }
+
+      // ── pubspec.yaml → Dart / Flutter ────────────────────────────────────────
+      java.io.File pubspec = findFile(repoDir, "pubspec.yaml", 2);
+      if (pubspec != null) {
+        persistDetectedStack(project, "Dart", "Flutter", "");
+        return new DetectedStack("Dart", "Flutter", "");
+      }
+
+      // ── Fallback 1: Dynamic AI detection using Gemini ─────────────────────────
+      try {
+        log.info("[STACK_DETECT] Running dynamic AI stack detection for project {}", project.getId());
+        String projectStructure = directoryScannerService.getProjectStructure(repoDir.toPath());
+        if (projectStructure != null && !projectStructure.isEmpty()) {
+          String detectionPrompt = """
+              You are an expert system utility. Analyze the project file/folder structure below:
+              
+              %s
+              
+              Identify:
+              1. The primary programming language (e.g. Java, PHP, Python, Go, Rust, TypeScript, C#, Ruby, Dart, etc.)
+              2. The primary framework (e.g. Spring Boot, Laravel, Django, Gin, Actix, React, Angular, Vue, Next.js, Rails, ASP.NET Core, etc.)
+              3. The approximate language or framework version if it can be inferred from config files.
+              
+              Return ONLY a valid JSON object.
+              Do not wrap the response in markdown.
+              Do not include ```json or ``` markers.
+              
+              Format:
+              {
+                "language": "LanguageName",
+                "framework": "FrameworkName",
+                "version": "VersionOrEmpty"
+              }
+              """.formatted(projectStructure);
+
+          String aiResponse = aiClient.generateContent(detectionPrompt);
+          String cleanedResponse = aiResponse
+              .replace("```json", "")
+              .replace("```", "")
+              .trim();
+
+          JsonNode rootNode = objectMapper.readTree(cleanedResponse);
+          String lang = rootNode.path("language").asText("").trim();
+          String framework = rootNode.path("framework").asText("").trim();
+          String version = rootNode.path("version").asText("").trim();
+
+          if (!lang.isEmpty() && !"Unknown".equalsIgnoreCase(lang)) {
+            persistDetectedStack(project, lang, framework, version);
+            return new DetectedStack(lang, framework, version);
+          }
+        }
+      } catch (Exception e) {
+        log.warn("[STACK_DETECT] AI stack detection failed, falling back to file extension counting: {}", e.getMessage());
+      }
+
+      // ── Fallback 2: count file extensions in repo ───────────────────────────────
+      java.util.Map<String, Long> extCounts = java.nio.file.Files.walk(repoDir.toPath(), 4)
+          .filter(p -> !java.nio.file.Files.isDirectory(p))
+          .map(p -> { String n = p.getFileName().toString(); int d = n.lastIndexOf('.'); return d >= 0 ? n.substring(d + 1).toLowerCase() : ""; })
+          .filter(e -> !e.isBlank())
+          .collect(java.util.stream.Collectors.groupingBy(e -> e, java.util.stream.Collectors.counting()));
+
+      String dominant = extCounts.entrySet().stream()
+          .filter(e -> java.util.List.of("java","kt","py","ts","tsx","js","jsx","go","rs","cs","rb","php","dart").contains(e.getKey()))
+          .max(java.util.Map.Entry.comparingByValue())
+          .map(java.util.Map.Entry::getKey).orElse("");
+
+      String detected = switch (dominant) {
+        case "java" -> "Java";
+        case "kt"   -> "Kotlin";
+        case "py"   -> "Python";
+        case "ts", "tsx" -> "TypeScript";
+        case "js", "jsx" -> "JavaScript";
+        case "go"   -> "Go";
+        case "rs"   -> "Rust";
+        case "cs"   -> "C#";
+        case "rb"   -> "Ruby";
+        case "php"  -> "PHP";
+        case "dart" -> "Dart";
+        default     -> "";
+      };
+      if (!detected.isBlank()) {
+        persistDetectedStack(project, detected, "", "");
+        return new DetectedStack(detected, "", "");
+      }
+
+    } catch (Exception e) {
+      log.warn("[STACK_DETECT] Error scanning repo for stack detection: {}", e.getMessage());
+    }
+    return new DetectedStack("", "", "");
+  }
+
+  /** Simple value record to carry detected language/framework/version. */
+  private record DetectedStack(String language, String framework, String version) {
+    boolean hasLanguage() { return language != null && !language.isBlank(); }
+  }
+
+  /** Persists detected values only if the project fields are currently blank. */
+  private void persistDetectedStack(com.developerev.model.Project project, String lang, String fw, String ver) {
+    boolean changed = false;
+    if ((project.getLanguage() == null || project.getLanguage().isBlank()) && !lang.isBlank()) {
+      project.setLanguage(lang); changed = true;
+    }
+    if ((project.getFramework() == null || project.getFramework().isBlank()) && !fw.isBlank()) {
+      project.setFramework(fw); changed = true;
+    }
+    if ((project.getLanguageVersion() == null || project.getLanguageVersion().isBlank()) && !ver.isBlank()) {
+      project.setLanguageVersion(ver); changed = true;
+    }
+    if (changed) {
+      projectRepository.save(project);
+      log.info("[STACK_DETECT] Auto-detected and persisted stack for project {}: lang={} fw={} ver={}",
+          project.getId(), lang, fw, ver);
+    }
+  }
+
+  /** Finds a file by name within maxDepth levels of root. Returns null if not found. */
+  private java.io.File findFile(java.io.File root, String filename, int maxDepth) {
+    try {
+      return java.nio.file.Files.walk(root.toPath(), maxDepth)
+          .filter(p -> p.getFileName().toString().equals(filename))
+          .map(java.nio.file.Path::toFile)
+          .findFirst().orElse(null);
+    } catch (Exception e) { return null; }
+  }
+
+  /** Extracts Java source version from pom.xml content. */
+  private String extractMavenJavaVersion(String pomContent) {
+    // Looks for <java.version>17</java.version> or <maven.compiler.source>17</maven.compiler.source>
+    java.util.regex.Matcher m = java.util.regex.Pattern
+        .compile("<(?:java\\.version|maven\\.compiler\\.source|maven\\.compiler\\.release)>(\\d+)</", java.util.regex.Pattern.DOTALL)
+        .matcher(pomContent);
+    return m.find() ? m.group(1) : "";
+  }
+
+  /** Extracts a package version from package.json content (handles ^ and ~ prefixes). */
+  private String extractNpmVersion(String pkgContent, String pkg) {
+    java.util.regex.Matcher m = java.util.regex.Pattern
+        .compile("\"" + java.util.regex.Pattern.quote(pkg) + "\"\\s*:\\s*\"[~^]?([\\d.]+)")
+        .matcher(pkgContent);
+    return m.find() ? m.group(1) : "";
+  }
+
+
   public ProjectPlanResponseDto generateProjectPlan(Long projectId, String featureDescription) {
 
     com.developerev.model.Project project = projectRepository.findById(projectId).orElse(null);
+
+    // ── Auto-detect stack from cloned repo if fields are empty ─────────────────
+    // This handles projects imported via Git clone with no manually filled fields.
+    if (project != null && (project.getLanguage() == null || project.getLanguage().isBlank())) {
+      java.io.File repoDir = gitService.getRepoDir(projectId);
+      DetectedStack detected = detectStackFromRepo(repoDir, project);
+      // Reload after persistence
+      if (detected.hasLanguage()) {
+        project = projectRepository.findById(projectId).orElse(project);
+        log.info("[PLAN] Auto-detected stack for project {}: {} / {}", projectId, detected.language(), detected.framework());
+      }
+    }
     String stackContext = "";
     if (project != null && project.getLanguage() != null) {
       stackContext = String.format("""
           Project Stack Context:
+          - Project Name: %s
           - Project Type: %s
           - Language: %s (version: %s)
           - Framework: %s (version: %s)
           - Database: %s (version: %s)
           - Selected Dependencies: %s
+          %s
           """,
+          project.getName(),
           project.getProjectType(),
           project.getLanguage(), project.getLanguageVersion(),
           project.getFramework(), project.getFrameworkVersion(),
           project.getDatabaseName(), project.getDatabaseVersion(),
-          project.getDependencies());
+          project.getDependencies(),
+          (project.getAiBusinessContext() != null
+              ? "- AI Business Understanding (scanned from codebase): " + project.getAiBusinessContext()
+              : ""));
     }
 
     // Inject linked project context when a companion project exists
@@ -105,14 +416,32 @@ public class AntiGravityService {
       }
     }
 
-    String prompt = """
+    // Build a hard mandatory language constraint line placed FIRST in the prompt
+    // so the AI cannot drift to another language/framework
+    String mandatoryStackLine = "";
+    if (project != null && project.getLanguage() != null) {
+      mandatoryStackLine = String.format(
+          "MANDATORY: You MUST write ALL code EXCLUSIVELY in %s%s%s. "
+          + "Do NOT generate code in any other language or framework under any circumstances. "
+          + "Every file you produce must be a valid %s file.",
+          project.getLanguage(),
+          (project.getFramework() != null && !project.getFramework().isBlank() ? " with " + project.getFramework() : ""),
+          (project.getLanguageVersion() != null && !project.getLanguageVersion().isBlank() ? " (version " + project.getLanguageVersion() + ")" : ""),
+          project.getLanguage());
+    }
+
+    String prompt = mandatoryStackLine + """
+
         You are a senior software architect.
         Return ONLY valid JSON.
         Do not wrap the response in markdown.
         Do not include ```json or ``` markers.
         No explanations. No markdown formatting.
 
-        Based on the feature description and project stack context, auto-detect all the specific libraries, dependencies, framework modules, or tools needed for this feature (compatible with the project stack, e.g., if project is Java/Spring Boot and feature is JWT auth, auto-detect "Spring Security", "jjwt library", etc.) and return them in "detectedNeeds".
+        Based on the feature description and project stack context below, plan the tasks needed.
+        ALL tasks must be designed for the project's exact language and framework specified above.
+        auto-detect all the specific libraries, dependencies, framework modules, or tools needed
+        for this feature (compatible with the project stack) and return them in "detectedNeeds".
 
         Response Format:
         {
@@ -213,21 +542,37 @@ public class AntiGravityService {
     }
 
     com.developerev.model.Project project = projectRepository.findById(feature.getProjectId()).orElse(null);
+
+    // ── Auto-detect stack from cloned repo if fields are empty ─────────────────
+    if (project != null && (project.getLanguage() == null || project.getLanguage().isBlank())) {
+      java.io.File repoDir = gitService.getRepoDir(feature.getProjectId());
+      DetectedStack detected = detectStackFromRepo(repoDir, project);
+      if (detected.hasLanguage()) {
+        project = projectRepository.findById(feature.getProjectId()).orElse(project);
+        log.info("[IMPL] Auto-detected stack for project {}: {} / {}", feature.getProjectId(), detected.language(), detected.framework());
+      }
+    }
     String stackInfo = "";
     if (project != null && project.getLanguage() != null) {
       stackInfo = String.format("""
           Project Tech Stack Context:
+          - Project Name: %s
           - Project Type: %s
           - Language: %s (version: %s)
           - Framework: %s (version: %s)
           - Database: %s (version: %s)
           - Base Stack Dependencies: %s
+          %s
           """,
+          project.getName(),
           project.getProjectType(),
           project.getLanguage(), project.getLanguageVersion(),
           project.getFramework(), project.getFrameworkVersion(),
           project.getDatabaseName(), project.getDatabaseVersion(),
-          project.getDependencies());
+          project.getDependencies(),
+          (project.getAiBusinessContext() != null
+              ? "- AI Business Understanding: " + project.getAiBusinessContext()
+              : ""));
     }
 
     // Inject linked project context for cross-project implementation awareness
@@ -270,33 +615,55 @@ public class AntiGravityService {
       projectStructureInfo = "\nExisting Project File/Folder Structure:\n" + projectStructure + "\n";
     }
 
+    // Build a hard mandatory language constraint placed FIRST in the prompt
+    // so the AI cannot generate code in any other language
+    String mandatoryImpl = "";
+    if (project != null && project.getLanguage() != null) {
+      mandatoryImpl = String.format(
+          "MANDATORY: You MUST write ALL code EXCLUSIVELY in %s%s%s. "
+          + "Do NOT generate any file in another language or framework. "
+          + "Every single generated file must be a valid %s source file or config compatible with %s%s.",
+          project.getLanguage(),
+          (project.getFramework() != null && !project.getFramework().isBlank() ? " with " + project.getFramework() : ""),
+          (project.getLanguageVersion() != null && !project.getLanguageVersion().isBlank() ? " (version " + project.getLanguageVersion() + ")" : ""),
+          project.getLanguage(),
+          project.getLanguage(),
+          (project.getFramework() != null && !project.getFramework().isBlank() ? "/" + project.getFramework() : ""));
+    }
+
     // 2. Build prompt
-    String prompt = """
+    String prompt = mandatoryImpl + """
+
         You are a senior full-stack developer. Your task is to implement the code for a specific feature based on the plan, tech stack, existing project file/folder structure, and detected dependencies/needs provided.
-        
+
+        CRITICAL RULES — READ BEFORE GENERATING ANYTHING:
+        1. Write ONLY in the language and framework specified in the MANDATORY constraint above.
+        2. Every file extension must match that language (e.g. .java for Java, .ts/.tsx for TypeScript, .py for Python, .php for PHP, .go for Go).
+        3. If the project is Java/Spring Boot — write Java. Never write Python, PHP, JS, TS, etc.
+        4. If the project is TypeScript/React — write TypeScript. Never write Java, PHP, etc.
+        5. If the project is PHP/Laravel — write PHP. Never write Java, Python, TypeScript, etc.
+        6. Align all generated file paths with the existing project structure shown below.
+        7. If an existing file (pom.xml, build.gradle, package.json, composer.json, config) needs updating, use its exact path.
+
         Analyze the existing project file/folder structure below. Align any new or modified files perfectly with this structure. For example, if there is a module/subdirectory (e.g., `DEV--backend`) containing the project codebase, make sure the paths in the generated JSON are nested correctly inside that subdirectory (e.g., starting with `DEV--backend/src/...`) rather than at the root level, so they integrate perfectly.
-        
-        Write the complete, production-ready code for the feature described below. Make sure the files generated are aligned with the specified language, framework, database, and dependencies. For example, if Maven/Gradle is used, update the pom.xml/build.gradle with any new dependencies if needed.
-        
-        Check the existing file paths carefully. If an existing file needs to be modified (like a `pom.xml`, config file, or existing controller/service/component), use its exact path from the project structure.
-        
+
         Return ONLY valid JSON.
         Do not wrap the response in markdown.
         Do not include ```json or ``` markers.
         No explanations. No markdown formatting.
-        
+
         Response format must strictly be:
         {
           "files": [
             {
-              "path": "src/main/java/com/example/MyClass.java",
-              "content": "package com.example;\\n\\npublic class MyClass {\\n}"
+              "path": "relative/path/to/file.ext",
+              "content": "file content matching the target language and framework code structure"
             }
           ]
         }
-        
+
         """ + stackInfo + linkedStackInfo + featureNeedsInfo + projectStructureInfo + """
-        
+
         Feature Description:
         """ + feature.getDescription() + "\n\nTasks:\n" + taskList.toString();
 
@@ -307,11 +674,16 @@ public class AntiGravityService {
       String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
+          .replace("\\'", "'")
           .trim();
 
       log.debug("Gemini implement plan response (cleaned): {}", cleanedResponse);
 
-      JsonNode rootNode = objectMapper.readTree(cleanedResponse);
+      // Use a local copy of objectMapper configured to allow unescaped control characters (e.g. newlines)
+      ObjectMapper localMapper = objectMapper.copy()
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true);
+      
+      JsonNode rootNode = localMapper.readTree(cleanedResponse);
       JsonNode filesNode = rootNode.get("files");
 
       if (filesNode != null && filesNode.isArray()) {
@@ -338,10 +710,10 @@ public class AntiGravityService {
       activityLogService.logCurrentUserActivity(feature.getProjectId(), "Implemented Plan", "AI implemented codebase for feature: " + feature.getName());
 
     } catch (JsonProcessingException e) {
-      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini implement plan response", e);
-      throw new AiResponseParsingException("JSON parse failure in implementPlan.", e);
+      log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini implement plan response: {}", e.getMessage(), e);
+      throw new AiResponseParsingException("JSON parse failure in implementPlan. Error details: " + e.getMessage(), e);
     } catch (Exception e) {
-      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in implementPlan", e);
+      log.error("[AI_ERROR][UNEXPECTED] Unexpected error in implementPlan: {}", e.getMessage(), e);
       throw new UnexpectedAiException("Unexpected error in implementPlan: " + e.getMessage(), e);
     }
   }
