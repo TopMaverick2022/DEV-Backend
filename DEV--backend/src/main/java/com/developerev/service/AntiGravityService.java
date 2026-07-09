@@ -11,13 +11,11 @@ import com.developerev.dto.ProjectPlanResponseDto;
 import com.developerev.dto.SprintAiResponseDto;
 import com.developerev.dto.SprintDetailDto;
 import com.developerev.dto.TaskDependencyDto;
-import com.developerev.model.ArchitecturePlan;
 import com.developerev.model.Feature;
 import com.developerev.model.Sprint;
 import com.developerev.model.Task;
 import com.developerev.model.TaskDependency;
 import com.developerev.model.TaskStatus;
-import com.developerev.repository.ArchitecturePlanRepository;
 import com.developerev.repository.FeatureRepository;
 import com.developerev.repository.SprintRepository;
 import com.developerev.repository.TaskDependencyRepository;
@@ -39,6 +37,7 @@ import java.util.Map;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@SuppressWarnings("null")
 public class AntiGravityService {
 
   private final AiClient aiClient;
@@ -46,7 +45,6 @@ public class AntiGravityService {
   private final TaskRepository taskRepository;
   private final SprintRepository sprintRepository;
   private final TaskDependencyRepository taskDependencyRepository;
-  private final ArchitecturePlanRepository architecturePlanRepository;
   private final ObjectMapper objectMapper;
   private final ZipExtractorService zipExtractorService;
   private final DirectoryScannerService directoryScannerService;
@@ -83,7 +81,7 @@ public class AntiGravityService {
         // Check one level deeper (e.g. monorepo with a backend subfolder)
         pom = java.nio.file.Files.walk(repoDir.toPath(), 2)
             .filter(p -> p.getFileName().toString().equals("pom.xml"))
-            .map(java.nio.file.Path::toFile)
+            .map(p -> p.toFile())
             .findFirst().orElse(null);
       }
       if (pom != null && pom.exists()) {
@@ -270,7 +268,7 @@ public class AntiGravityService {
       String dominant = extCounts.entrySet().stream()
           .filter(e -> java.util.List.of("java","kt","py","ts","tsx","js","jsx","go","rs","cs","rb","php","dart").contains(e.getKey()))
           .max(java.util.Map.Entry.comparingByValue())
-          .map(java.util.Map.Entry::getKey).orElse("");
+          .map(e -> e.getKey()).orElse("");
 
       String detected = switch (dominant) {
         case "java" -> "Java";
@@ -326,7 +324,7 @@ public class AntiGravityService {
     try {
       return java.nio.file.Files.walk(root.toPath(), maxDepth)
           .filter(p -> p.getFileName().toString().equals(filename))
-          .map(java.nio.file.Path::toFile)
+          .map(p -> p.toFile())
           .findFirst().orElse(null);
     } catch (Exception e) { return null; }
   }
@@ -638,14 +636,14 @@ public class AntiGravityService {
         feature.setDetectedNeeds(String.join(", ", responseDto.getDetectedNeeds()));
       }
 
-      feature = featureRepository.save(feature);
+      Feature savedFeature = featureRepository.save(feature);
 
       // Save related Tasks
       if (responseDto.getTasks() != null) {
         for (ProjectPlanResponseDto.TaskDto taskDto : responseDto.getTasks()) {
           com.developerev.model.Task task = new com.developerev.model.Task();
           task.setProjectId(projectId);
-          task.setFeatureId(feature.getId());
+          task.setFeatureId(savedFeature.getId());
           task.setTitle(taskDto.getTitle());
           task.setDescription(taskDto.getDescription());
           task.setType(taskDto.getType());
@@ -659,7 +657,7 @@ public class AntiGravityService {
         }
       }
 
-      responseDto.setFeatureId(feature.getId());
+      responseDto.setFeatureId(savedFeature.getId());
 
       activityLogService.logCurrentUserActivity(projectId, "Generated Project Plan", "Generated AI plan for feature: " + featureDescription);
       return responseDto;
@@ -867,7 +865,7 @@ public class AntiGravityService {
         taskRepository.save(task);
       }
 
-      activityLogService.logCurrentUserActivity(feature.getProjectId(), "Implemented Plan", "AI implemented codebase for feature: " + feature.getName());
+      activityLogService.logCurrentUserActivity(feature.getProjectId(), "Implemented Plan", "AI implemented codebase for feature: " + feature.getName()); // feature.getProjectId() is set by caller
 
     } catch (JsonProcessingException e) {
       log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini implement plan response: {}", e.getMessage(), e);
@@ -972,25 +970,26 @@ public class AntiGravityService {
             .sprintNumber(sprintNumber)
             .build();
 
-        sprint = sprintRepository.save(sprint);
-        log.info("Saved sprint: {} (number {})", sprint.getName(), sprintNumber);
+        Sprint savedSprint = sprintRepository.save(sprint);
+        log.info("Saved sprint: {} (number {})", savedSprint.getName(), sprintNumber);
 
         List<Task> assignedTasks = new ArrayList<>();
+        Long savedSprintId = savedSprint.getId();
 
         if (sprintItem.getTasks() != null) {
           for (SprintAiResponseDto.TaskRef ref : sprintItem.getTasks()) {
             Task task = taskMap.get(ref.getTaskId());
             if (task != null) {
-              task.setSprintId(sprint.getId());
+              task.setSprintId(savedSprintId);
               taskRepository.save(task);
               assignedTasks.add(task);
             } else {
-              log.warn("AI referenced unknown taskId {} in sprint '{}' — skipping", ref.getTaskId(), sprint.getName());
+              log.warn("AI referenced unknown taskId {} in sprint '{}' — skipping", ref.getTaskId(), savedSprint.getName());
             }
           }
         }
 
-        result.add(new SprintDetailDto(sprint.getId(), sprint.getName(), sprintNumber, assignedTasks));
+        result.add(new SprintDetailDto(savedSprintId, savedSprint.getName(), sprintNumber, assignedTasks));
       }
 
       log.info("Generated {} sprints for feature {}", result.size(), featureId);
@@ -1106,7 +1105,8 @@ public class AntiGravityService {
               .dependentTask(dependentTask)
               .prerequisiteTask(prerequisiteTask)
               .build();
-          taskDependencyRepository.save(dependency);
+          var savedDep = taskDependencyRepository.save(dependency);
+          log.debug("Saved dependency id={}", savedDep.getId());
 
           result.add(new TaskDependencyDto(
               dependentTask.getId(),
@@ -1121,8 +1121,7 @@ public class AntiGravityService {
 
       log.info("Detected {} dependencies for feature {}", result.size(), featureId);
       
-      Long projectId = null;
-      if (!tasks.isEmpty()) { projectId = tasks.get(0).getProjectId(); }
+      Long projectId = tasks.isEmpty() ? null : tasks.get(0).getProjectId();
       activityLogService.logCurrentUserActivity(projectId, "Detected Dependencies", "Detected task dependencies for feature ID: " + featureId);
       
       return result;
@@ -1185,23 +1184,23 @@ public class AntiGravityService {
       int hours = t.getEstimatedHours() != null ? t.getEstimatedHours() : 0;
       eft.put(t.getId(), hours); // initial EFT = own hours (no prereq yet)
       parent.put(t.getId(), null);
-      if (inDegree.get(t.getId()) == 0)
+      if (java.util.Objects.requireNonNullElse(inDegree.get(t.getId()), 0) == 0)
         queue.add(t.getId());
     }
 
     while (!queue.isEmpty()) {
       Long curr = queue.poll();
       for (Long nextId : dependents.get(curr)) {
-        int candidate = eft.get(curr) +
+        int candidate = java.util.Objects.requireNonNullElse(eft.get(curr), 0) +
             (taskMap.get(nextId).getEstimatedHours() != null
                 ? taskMap.get(nextId).getEstimatedHours()
                 : 0);
-        if (candidate > eft.get(nextId)) {
+        if (candidate > java.util.Objects.requireNonNullElse(eft.get(nextId), 0)) {
           eft.put(nextId, candidate);
           parent.put(nextId, curr);
         }
         inDegree.merge(nextId, -1, (a, b) -> a + b);
-        if (inDegree.get(nextId) == 0)
+        if (java.util.Objects.requireNonNullElse(inDegree.get(nextId), 0) == 0)
           queue.add(nextId);
       }
     }
@@ -1209,9 +1208,9 @@ public class AntiGravityService {
     // 5. Find the task with the highest EFT — that is the end of the critical path
     Long endTaskId = tasks.stream()
         .map(Task::getId)
-        .max(java.util.Comparator.comparingInt(eft::get))
+        .max(java.util.Comparator.comparingInt(id -> java.util.Objects.requireNonNullElse(eft.get(id), 0)))
         .orElseThrow();
-    int criticalPathHours = eft.get(endTaskId);
+    int criticalPathHours = java.util.Objects.requireNonNullElse(eft.get(endTaskId), 0);
 
     // 6. Walk parent pointers back to reconstruct the path, then reverse it
     java.util.Deque<String> path = new java.util.ArrayDeque<>();
@@ -1224,8 +1223,7 @@ public class AntiGravityService {
     log.info("Critical path for feature {}: {} hours, {} tasks",
         featureId, criticalPathHours, path.size());
 
-    Long projectId = null;
-    if (!tasks.isEmpty()) { projectId = tasks.get(0).getProjectId(); }
+    Long projectId = tasks.isEmpty() ? null : tasks.get(0).getProjectId();
     activityLogService.logCurrentUserActivity(projectId, "Computed Critical Path", "Computed critical path for feature ID: " + featureId);
 
     return new CriticalPathResponseDto(criticalPathHours, new ArrayList<>(path));

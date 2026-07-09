@@ -19,6 +19,7 @@ import com.developerev.repository.CodeFileRepository;
 import com.developerev.repository.CodeProjectRepository;
 import com.developerev.repository.CodeReviewRepository;
 
+@SuppressWarnings("null")
 @Service
 @RequiredArgsConstructor
 public class ProjectService {
