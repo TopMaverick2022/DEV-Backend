@@ -73,6 +73,14 @@ public class AIController {
         }
     }
 
+    @PostMapping("/precheck-feature")
+    public ResponseEntity<?> precheckFeature(@RequestBody ProjectPlanRequestDto request) {
+        Long projectId = request.getProjectId();
+        String featureDescription = request.getFeatureDescription();
+        com.developerev.dto.PrecheckFeatureResponseDto response = antiGravityService.precheckProjectFeature(projectId, featureDescription);
+        return ResponseEntity.ok(response);
+    }
+
     @PostMapping("/project-plan")
     public ResponseEntity<?> generatePlan(@RequestBody ProjectPlanRequestDto request) {
 
@@ -106,3 +114,5 @@ public class AIController {
         return ResponseEntity.status(status).body(response);
     }
 }
+
+
