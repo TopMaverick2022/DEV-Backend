@@ -40,7 +40,7 @@ public class GitService {
         File repoDir = getRepoDir(projectId);
         UsernamePasswordCredentialsProvider credentials = (repoUrl != null && repoUrl.contains("gitlab"))
                 ? new UsernamePasswordCredentialsProvider("oauth2", token)
-                : new UsernamePasswordCredentialsProvider(token, "");
+                : new UsernamePasswordCredentialsProvider("x-oauth-token", token);
 
         try {
             if (repoDir.exists() && new File(repoDir, ".git").exists()) {
@@ -90,7 +90,7 @@ public class GitService {
         String repoUrl = project != null ? project.getGithubRepoUrl() : "";
         UsernamePasswordCredentialsProvider credentials = (repoUrl != null && repoUrl.contains("gitlab"))
                 ? new UsernamePasswordCredentialsProvider("oauth2", token)
-                : new UsernamePasswordCredentialsProvider(token, "");
+                : new UsernamePasswordCredentialsProvider("x-oauth-token", token);
 
         try (Git git = Git.open(repoDir)) {
             // Stage all files

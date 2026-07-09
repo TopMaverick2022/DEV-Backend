@@ -6,6 +6,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Entity
 @Table(name = "projects")
@@ -16,6 +17,21 @@ import java.time.LocalDateTime;
 @Builder
 @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Project {
+
+    /**
+     * STANDALONE = single embedded project (HTML+CSS+JS+backend in one repo, default)
+     * FRONTEND   = a frontend-only project that pairs with a separate backend project
+     * BACKEND    = a backend-only project that pairs with a separate frontend project
+     */
+    @Column(name = "project_type", nullable = false)
+    private String projectType = "STANDALONE";
+
+    /**
+     * ID of the linked companion project (null for STANDALONE).
+     * Bidirectional: both sides store each other's ID.
+     */
+    @Column(name = "related_project_id")
+    private Long relatedProjectId;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

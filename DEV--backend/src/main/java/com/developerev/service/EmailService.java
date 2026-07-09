@@ -12,6 +12,7 @@ import java.util.Properties;
 
 @Slf4j
 @Service
+@SuppressWarnings("null")
 public class EmailService {
 
     private final JavaMailSender otpMailSender;

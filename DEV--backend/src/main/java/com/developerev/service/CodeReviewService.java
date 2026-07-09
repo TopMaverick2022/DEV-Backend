@@ -8,7 +8,6 @@ import com.developerev.model.CodeReview;
 import com.developerev.repository.CodeFileRepository;
 import com.developerev.repository.CodeProjectRepository;
 import com.developerev.repository.CodeReviewRepository;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,7 +22,6 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -48,6 +46,7 @@ import java.util.function.Consumer;
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@SuppressWarnings("null")
 public class CodeReviewService {
 
     // ── Pipeline services ──────────────────────────────────────────────────
@@ -63,7 +62,6 @@ public class CodeReviewService {
     private final CodeFileRepository codeFileRepository;
     private final CodeReviewRepository codeReviewRepository;
     private final ProjectService projectService;
-    private final com.developerev.repository.ProjectRepository projectRepository;
     private final ObjectMapper objectMapper;
     private final GitService gitService;
 

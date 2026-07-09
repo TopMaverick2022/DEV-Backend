@@ -79,4 +79,46 @@ public class ProjectController {
         String context = antiGravityService.analyzeAndStoreProjectContext(id);
         return ResponseEntity.ok(java.util.Map.of("aiBusinessContext", context));
     }
+
+    /**
+     * Links this project to another project bidirectionally.
+     * Body: { "relatedProjectId": 5 }
+     * Optionally accepts projectType override: { "relatedProjectId": 5, "projectType": "FRONTEND" }
+     */
+    @PutMapping("/{id}/link")
+    public ResponseEntity<Project> linkProject(
+            @PathVariable("id") Long id,
+            @RequestBody java.util.Map<String, Object> body,
+            Authentication authentication) {
+        Long relatedProjectId = Long.valueOf(body.get("relatedProjectId").toString());
+        Project project = projectService.linkProjects(id, relatedProjectId, authentication.getName());
+        // Allow explicit projectType override from payload
+        if (body.containsKey("projectType")) {
+            project.setProjectType(body.get("projectType").toString());
+            // Also persist if provided
+        }
+        return ResponseEntity.ok(project);
+    }
+
+    /**
+     * Removes the bidirectional link for this project and resets type to STANDALONE.
+     */
+    @DeleteMapping("/{id}/link")
+    public ResponseEntity<Project> unlinkProject(
+            @PathVariable("id") Long id,
+            Authentication authentication) {
+        return ResponseEntity.ok(projectService.unlinkProject(id, authentication.getName()));
+    }
+
+    /**
+     * Returns the linked companion project (if any).
+     */
+    @GetMapping("/{id}/linked")
+    public ResponseEntity<Project> getLinkedProject(
+            @PathVariable("id") Long id,
+            Authentication authentication) {
+        return projectService.getLinkedProject(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
 }
