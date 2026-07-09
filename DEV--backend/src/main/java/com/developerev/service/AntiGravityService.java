@@ -240,11 +240,18 @@ public class AntiGravityService {
 
           String aiResponse = aiClient.generateContent(detectionPrompt);
           String cleanedResponse = aiResponse
-              .replace("```json", "")
-              .replace("```", "")
-              .trim();
+          .replace("```json", "")
+          .replace("```", "")
+          .replace("\\'", "'")
+          .trim();
+      
+      cleanedResponse = sanitizeJson(cleanedResponse);
 
-          JsonNode rootNode = objectMapper.readTree(cleanedResponse);
+      com.fasterxml.jackson.databind.ObjectMapper localMapper = objectMapper.copy()
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true)
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER.mappedFeature(), true);
+          
+      JsonNode rootNode = localMapper.readTree(cleanedResponse);
           String lang = rootNode.path("language").asText("").trim();
           String framework = rootNode.path("framework").asText("").trim();
           String version = rootNode.path("version").asText("").trim();
@@ -829,13 +836,13 @@ public class AntiGravityService {
           .replace("```", "")
           .replace("\\'", "'")
           .trim();
-
-      log.debug("Gemini implement plan response (cleaned): {}", cleanedResponse);
-
-      // Use a local copy of objectMapper configured to allow unescaped control characters (e.g. newlines)
-      ObjectMapper localMapper = objectMapper.copy()
-          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true);
       
+      cleanedResponse = sanitizeJson(cleanedResponse);
+
+      com.fasterxml.jackson.databind.ObjectMapper localMapper = objectMapper.copy()
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true)
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER.mappedFeature(), true);
+          
       JsonNode rootNode = localMapper.readTree(cleanedResponse);
       JsonNode filesNode = rootNode.get("files");
 
@@ -948,12 +955,16 @@ public class AntiGravityService {
       String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
+          .replace("\\'", "'")
           .trim();
+      
+      cleanedResponse = sanitizeJson(cleanedResponse);
 
-      log.debug("Gemini sprint response (cleaned): {}", cleanedResponse);
-
-      // 5. Parse Gemini response into DTO
-      SprintAiResponseDto dtoResponse = objectMapper.readValue(cleanedResponse, SprintAiResponseDto.class);
+      com.fasterxml.jackson.databind.ObjectMapper localMapper = objectMapper.copy()
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true)
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER.mappedFeature(), true);
+          
+      SprintAiResponseDto dtoResponse = localMapper.readValue(cleanedResponse, SprintAiResponseDto.class);
 
       List<SprintDetailDto> result = new ArrayList<>();
 
@@ -1076,12 +1087,16 @@ public class AntiGravityService {
       String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
+          .replace("\\'", "'")
           .trim();
+      
+      cleanedResponse = sanitizeJson(cleanedResponse);
 
-      log.debug("Gemini dependency response (cleaned): {}", cleanedResponse);
-
-      // 4. Parse AI response
-      DependencyAiResponseDto dtoResponse = objectMapper.readValue(cleanedResponse, DependencyAiResponseDto.class);
+      com.fasterxml.jackson.databind.ObjectMapper localMapper = objectMapper.copy()
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true)
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER.mappedFeature(), true);
+          
+      DependencyAiResponseDto dtoResponse = localMapper.readValue(cleanedResponse, DependencyAiResponseDto.class);
 
       List<TaskDependencyDto> result = new ArrayList<>();
 
@@ -1511,9 +1526,16 @@ public class AntiGravityService {
       String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
+          .replace("\\'", "'")
           .trim();
+      
+      cleanedResponse = sanitizeJson(cleanedResponse);
 
-      return objectMapper.readValue(cleanedResponse, ArchitectureResponseDto.class);
+      com.fasterxml.jackson.databind.ObjectMapper localMapper = objectMapper.copy()
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true)
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER.mappedFeature(), true);
+          
+      return localMapper.readValue(cleanedResponse, ArchitectureResponseDto.class);
     } catch (Exception e) {
       log.error("Failed to parse AI response for architecture: {}", aiResponse, e);
       throw new RuntimeException("Failed to generate architecture: " + e.getMessage(), e);
@@ -1573,13 +1595,16 @@ public class AntiGravityService {
       String cleanedResponse = aiResponse
           .replace("```json", "")
           .replace("```", "")
+          .replace("\\'", "'")
           .trim();
+      
+      cleanedResponse = sanitizeJson(cleanedResponse);
 
-      log.debug("Gemini database schema response (cleaned): {}", cleanedResponse);
-
-      activityLogService.logCurrentUserActivity(null, "Generated Database Schema", "Generated DB schema design");
-
-      return objectMapper.readValue(cleanedResponse, DatabaseSchemaResponseDto.class);
+      com.fasterxml.jackson.databind.ObjectMapper localMapper = objectMapper.copy()
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true)
+          .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER.mappedFeature(), true);
+          
+      return localMapper.readValue(cleanedResponse, DatabaseSchemaResponseDto.class);
 
     } catch (JsonProcessingException e) {
       log.error("[AI_ERROR][PARSE_FAILURE] Failed to parse Gemini Database Schema response", e);
