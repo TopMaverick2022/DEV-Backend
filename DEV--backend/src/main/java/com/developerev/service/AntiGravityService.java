@@ -684,15 +684,33 @@ public class AntiGravityService {
   // AI Plan Implementer
   // ─────────────────────────────────────────────────────────────────────────────
 
-  public void implementPlan(Long featureId, String username) {
+  public void implementPlan(Long featureId, String username, String taskType) {
     // 1. Load feature and tasks
     Feature feature = featureRepository.findById(featureId)
         .orElseThrow(() -> new RuntimeException("Feature not found with id: " + featureId));
 
-    List<Task> tasks = taskRepository.findByFeatureId(featureId);
-    if (tasks.isEmpty()) {
+    List<Task> allTasks = taskRepository.findByFeatureId(featureId);
+    if (allTasks.isEmpty()) {
       throw new RuntimeException("No tasks found for feature id: " + featureId + ". Generate a project plan first.");
     }
+
+    // 2. Filter by taskType when a specific category is requested (e.g. "Frontend", "Backend")
+    //    Omitting taskType or passing "All" implements everything.
+    boolean isCategorySpecific = taskType != null && !taskType.isBlank() && !"All".equalsIgnoreCase(taskType);
+    List<Task> tasks = isCategorySpecific
+        ? allTasks.stream()
+            .filter(t -> taskType.equalsIgnoreCase(t.getType()))
+            .collect(java.util.stream.Collectors.toList())
+        : allTasks;
+
+    if (tasks.isEmpty()) {
+      throw new RuntimeException(
+          "No '" + taskType + "' tasks found for feature id: " + featureId +
+          ". The plan may not contain this task category.");
+    }
+
+    log.info("[IMPL] Implementing {} tasks for feature '{}' (category: {})",
+        tasks.size(), feature.getName(), isCategorySpecific ? taskType : "All");
 
     StringBuilder taskList = new StringBuilder();
     for (Task task : tasks) {
@@ -789,8 +807,17 @@ public class AntiGravityService {
           (project.getFramework() != null && !project.getFramework().isBlank() ? "/" + project.getFramework() : ""));
     }
 
+    // Category scope constraint — inserted after language MANDATORY so Gemini knows the layer scope
+    String categoryScope = isCategorySpecific
+        ? String.format(
+            "\n\nSCOPE CONSTRAINT: You are implementing ONLY the '%s' layer of this feature plan.\n"
+            + "Do NOT generate files for any other layer (e.g. do not add backend controllers if this is a Frontend task).\n"
+            + "Focus EXCLUSIVELY on the %s-related files listed in the task list below.\n",
+            taskType, taskType)
+        : "";
+
     // 2. Build prompt
-    String prompt = mandatoryImpl + """
+    String prompt = mandatoryImpl + categoryScope + """
 
         You are a senior full-stack developer. Your task is to implement the ACTUAL SOURCE CODE for a specific feature based on the plan, tech stack, existing project file/folder structure, and detected dependencies/needs provided.
 
@@ -825,9 +852,10 @@ public class AntiGravityService {
         """ + stackInfo + linkedStackInfo + featureNeedsInfo + projectStructureInfo + """
 
         Feature Description:
-        """ + feature.getDescription() + "\n\nTasks:\n" + taskList.toString();
+        """ + feature.getDescription() + "\n\nTasks to implement (" + (isCategorySpecific ? taskType + " layer only" : "all layers") + "):\n" + taskList.toString();
 
-    log.info("Calling Gemini to implement plan for feature: {}", feature.getName());
+    log.info("Calling Gemini to implement plan for feature: '{}' (category: {})",
+        feature.getName(), isCategorySpecific ? taskType : "All");
     String aiResponse = aiClient.generateContent(prompt);
 
     try {
@@ -1292,9 +1320,29 @@ public class AntiGravityService {
       sb.append(project.getAiBusinessContext()).append("\n");
       sb.append("----------------------------------------------------------\n");
     }
+
     sb.append("=========================================\n");
     return sb.toString();
   }
+
+  /**
+   * Returns true for files that reveal the project's real tech stack
+   * (DB connections, framework configs, dependency manifests).
+   * Used by buildProjectContextPromptString() for a lightweight workspace scan.
+   */
+  private boolean isKeyConfigFile(String fileName) {
+    String f = fileName.toLowerCase();
+    return f.equals("config.php") || f.equals("db_connection.php") || f.equals("database.php")
+        || f.equals("application.properties") || f.equals("application.yml") || f.equals("application.yaml")
+        || f.equals("pom.xml") || f.equals("build.gradle") || f.equals("build.gradle.kts")
+        || f.equals("package.json") || f.equals("composer.json") || f.equals("requirements.txt")
+        || f.equals("go.mod") || f.equals("cargo.toml") || f.equals("pubspec.yaml")
+        || f.equals(".env") || f.equals(".env.example") || f.equals(".env.local")
+        || f.startsWith("application-") && (f.endsWith(".yml") || f.endsWith(".yaml") || f.endsWith(".properties"))
+        || f.equals("docker-compose.yml") || f.equals("docker-compose.yaml")
+        || f.equals("settings.py") || f.equals("config.py") || f.equals("database.yml");
+  }
+
 
   /**
    * Scans the actual project codebase file/folder structure and uses the LLM to
@@ -1322,11 +1370,11 @@ public class AntiGravityService {
           .filter(p -> !java.nio.file.Files.isDirectory(p))
           .filter(p -> {
             String name = p.getFileName().toString().toLowerCase();
-            return name.endsWith(".java") || name.endsWith(".ts") || name.endsWith(".tsx")
+            return isKeyConfigFile(name) || name.endsWith(".java") || name.endsWith(".ts") || name.endsWith(".tsx")
                 || name.endsWith(".py") || name.endsWith(".js") || name.endsWith(".go")
-                || name.endsWith(".cs") || name.endsWith(".kt");
+                || name.endsWith(".cs") || name.endsWith(".kt") || name.endsWith(".php");
           })
-          .limit(30) // Cap at 30 files to stay within token budget
+          .limit(40) // Cap at 40 files to stay within token budget
           .forEach(p -> {
             try {
               String content = java.nio.file.Files.readString(p);
@@ -1355,8 +1403,9 @@ public class AntiGravityService {
         3. The key workflows and processes (e.g. user books a flight, payment is processed, confirmation is sent)
         4. The major services/modules and their responsibilities
         5. Any external integrations or APIs present
+        6. The exact technical stack used (e.g. database type, frameworks, key libraries), citing the config/connection files as evidence.
 
-        Write a concise, dense business context summary in plain English (max 400 words).
+        Write a concise, dense business and tech-stack context summary in plain English (max 400 words).
         This summary will be injected into every AI prompt for this project.
         Do NOT include technical jargon that isn't domain-specific.
         Focus on WHAT the system does for its users, not HOW it is implemented.

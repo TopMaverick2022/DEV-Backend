@@ -241,13 +241,18 @@ public class AiController {
      * POST /ai/implement-plan/{featureId}
      * Generate the full code for a given feature plan using Gemini,
      * and save it directly into the selected project's workspace folder.
+     *
+     * @param taskType optional — when provided, only tasks of this type (e.g. "Frontend",
+     *                 "Backend", "Database") are implemented. Omit (or send "All") to
+     *                 implement every task in the feature plan.
      */
     @PostMapping("/implement-plan/{featureId}")
     public ResponseEntity<Map<String, String>> implementPlan(
             @PathVariable("featureId") Long featureId,
+            @RequestParam(value = "taskType", required = false) String taskType,
             org.springframework.security.core.Authentication authentication) {
         String username = authentication != null ? authentication.getName() : null;
-        antiGravityService.implementPlan(featureId, username);
+        antiGravityService.implementPlan(featureId, username, taskType);
         return ResponseEntity.ok(Map.of("message", "Plan implemented and saved successfully"));
     }
 
