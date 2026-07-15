@@ -413,7 +413,7 @@ public class AntiGravityService {
 
         """ + projectKnowledgeContext + "\nFeature:\n" + featureDescription;
 
-    String aiResponse = aiClient.generateContent(prompt);
+    String aiResponse = generateAiResponseWithContext(projectId, prompt, false);
 
     try {
       String cleanedResponse = aiResponse.replace("```json", "").replace("```", "").trim();
@@ -472,58 +472,6 @@ public class AntiGravityService {
         log.info("[PLAN] Auto-detected stack for project {}: {} / {}", projectId, detected.language(), detected.framework());
       }
     }
-    String stackContext = "";
-    if (project != null && project.getLanguage() != null) {
-      stackContext = String.format("""
-          Project Stack Context:
-          - Project Name: %s
-          - Project Type: %s
-          - Language: %s (version: %s)
-          - Framework: %s (version: %s)
-          - Database: %s (version: %s)
-          - Selected Dependencies: %s
-          %s
-          """,
-          project.getName(),
-          project.getProjectType(),
-          project.getLanguage(), project.getLanguageVersion(),
-          project.getFramework(), project.getFrameworkVersion(),
-          project.getDatabaseName(), project.getDatabaseVersion(),
-          project.getDependencies(),
-          (project.getAiBusinessContext() != null
-              ? "- AI Business Understanding (scanned from codebase): " + project.getAiBusinessContext()
-              : ""));
-    }
-
-    // Inject linked project context when a companion project exists
-    String linkedContext = "";
-    if (project != null && project.getRelatedProjectId() != null) {
-      com.developerev.model.Project linked = projectRepository.findById(project.getRelatedProjectId()).orElse(null);
-      if (linked != null) {
-        String companion = "FRONTEND".equals(project.getProjectType()) ? "Backend" : "Frontend";
-        linkedContext = String.format("""
-
-          Linked %s Project Context (this feature may span both projects — understand the full connectivity pipeline):
-          - Project Name: %s
-          - Project Type: %s
-          - Language: %s (version: %s)
-          - Framework: %s (version: %s)
-          - Database: %s (version: %s)
-          - Dependencies: %s
-          %s
-          """,
-            companion,
-            linked.getName(), linked.getProjectType(),
-            linked.getLanguage(), linked.getLanguageVersion(),
-            linked.getFramework(), linked.getFrameworkVersion(),
-            linked.getDatabaseName(), linked.getDatabaseVersion(),
-            linked.getDependencies(),
-            (linked.getAiBusinessContext() != null
-                ? "- AI Business Understanding: " + linked.getAiBusinessContext()
-                : ""));
-      }
-    }
-
     // Gather codebase knowledge to figure out what is already implemented
     String projectKnowledgeContext = "";
     if (repoDir != null && repoDir.exists()) {
@@ -561,21 +509,7 @@ public class AntiGravityService {
       }
     }
 
-    // Build a hard mandatory language constraint line placed FIRST in the prompt
-    // so the AI cannot drift to another language/framework
-    String mandatoryStackLine = "";
-    if (project != null && project.getLanguage() != null) {
-      mandatoryStackLine = String.format(
-          "MANDATORY: You MUST write ALL code EXCLUSIVELY in %s%s%s. "
-          + "Do NOT generate code in any other language or framework under any circumstances. "
-          + "Every file you produce must be a valid %s file.",
-          project.getLanguage(),
-          (project.getFramework() != null && !project.getFramework().isBlank() ? " with " + project.getFramework() : ""),
-          (project.getLanguageVersion() != null && !project.getLanguageVersion().isBlank() ? " (version " + project.getLanguageVersion() + ")" : ""),
-          project.getLanguage());
-    }
-
-    String prompt = mandatoryStackLine + """
+    String prompt = """
 
         You are a senior software architect with deep knowledge of codebases.
         Return ONLY valid JSON.
@@ -618,11 +552,11 @@ public class AntiGravityService {
           ]
         }
 
-        """ + stackContext + linkedContext + projectKnowledgeContext + "\nFeature:\n" + featureDescription;
+        """ + projectKnowledgeContext + "\nFeature:\n" + featureDescription;
 
 
 
-    String aiResponse = aiClient.generateContent(prompt);
+    String aiResponse = generateAiResponseWithContext(projectId, prompt, true);
 
     try {
       String cleanedResponse = aiResponse
@@ -644,6 +578,31 @@ public class AntiGravityService {
       }
 
       Feature savedFeature = featureRepository.save(feature);
+
+      // Sync database setting to the project if not already set
+      try {
+        com.developerev.model.Project currentProject = projectRepository.findById(projectId).orElse(null);
+        if (currentProject != null && (currentProject.getDatabaseName() == null || currentProject.getDatabaseName().trim().isEmpty() || currentProject.getDatabaseName().equalsIgnoreCase("None"))) {
+          if (responseDto.getDetectedNeeds() != null) {
+            List<String> knownDbs = List.of("MySQL", "PostgreSQL", "MongoDB", "SQLite", "Redis", "Oracle", "MariaDB", "Cassandra", "DynamoDB");
+            for (String need : responseDto.getDetectedNeeds()) {
+              boolean found = false;
+              for (String db : knownDbs) {
+                if (need.trim().equalsIgnoreCase(db)) {
+                  currentProject.setDatabaseName(db);
+                  projectRepository.save(currentProject);
+                  log.info("[PLAN_SYNC] Automatically set project database to '{}' based on detected feature needs", db);
+                  found = true;
+                  break;
+                }
+              }
+              if (found) break;
+            }
+          }
+        }
+      } catch (Exception e) {
+        log.warn("Failed to automatically sync project database from feature detectedNeeds", e);
+      }
 
       // Save related Tasks
       if (responseDto.getTasks() != null) {
@@ -728,57 +687,6 @@ public class AntiGravityService {
         log.info("[IMPL] Auto-detected stack for project {}: {} / {}", feature.getProjectId(), detected.language(), detected.framework());
       }
     }
-    String stackInfo = "";
-    if (project != null && project.getLanguage() != null) {
-      stackInfo = String.format("""
-          Project Tech Stack Context:
-          - Project Name: %s
-          - Project Type: %s
-          - Language: %s (version: %s)
-          - Framework: %s (version: %s)
-          - Database: %s (version: %s)
-          - Base Stack Dependencies: %s
-          %s
-          """,
-          project.getName(),
-          project.getProjectType(),
-          project.getLanguage(), project.getLanguageVersion(),
-          project.getFramework(), project.getFrameworkVersion(),
-          project.getDatabaseName(), project.getDatabaseVersion(),
-          project.getDependencies(),
-          (project.getAiBusinessContext() != null
-              ? "- AI Business Understanding: " + project.getAiBusinessContext()
-              : ""));
-    }
-
-    // Inject linked project context for cross-project implementation awareness
-    String linkedStackInfo = "";
-    if (project != null && project.getRelatedProjectId() != null) {
-      com.developerev.model.Project linked = projectRepository.findById(project.getRelatedProjectId()).orElse(null);
-      if (linked != null) {
-        String companion = "FRONTEND".equals(project.getProjectType()) ? "Backend" : "Frontend";
-        linkedStackInfo = String.format("""
-
-          Linked %s Project (understand API contracts, data models, and connectivity when implementing):
-          - Name: %s (%s project)
-          - Language: %s (version: %s)
-          - Framework: %s (version: %s)
-          - Database: %s (version: %s)
-          - Dependencies: %s
-          %s
-          """,
-            companion,
-            linked.getName(), linked.getProjectType(),
-            linked.getLanguage(), linked.getLanguageVersion(),
-            linked.getFramework(), linked.getFrameworkVersion(),
-            linked.getDatabaseName(), linked.getDatabaseVersion(),
-            linked.getDependencies(),
-            (linked.getAiBusinessContext() != null
-                ? "- AI Business Context: " + linked.getAiBusinessContext()
-                : ""));
-      }
-    }
-
     String featureNeedsInfo = "";
     if (feature.getDetectedNeeds() != null && !feature.getDetectedNeeds().isEmpty()) {
       featureNeedsInfo = "\nDetected stack needs/dependencies for this feature: " + feature.getDetectedNeeds() + "\n";
@@ -791,22 +699,6 @@ public class AntiGravityService {
       projectStructureInfo = "\nExisting Project File/Folder Structure:\n" + projectStructure + "\n";
     }
 
-    // Build a hard mandatory language constraint placed FIRST in the prompt
-    // so the AI cannot generate code in any other language
-    String mandatoryImpl = "";
-    if (project != null && project.getLanguage() != null) {
-      mandatoryImpl = String.format(
-          "MANDATORY: You MUST write ALL code EXCLUSIVELY in %s%s%s. "
-          + "Do NOT generate any file in another language or framework. "
-          + "Every single generated file must be a valid %s source file or config compatible with %s%s.",
-          project.getLanguage(),
-          (project.getFramework() != null && !project.getFramework().isBlank() ? " with " + project.getFramework() : ""),
-          (project.getLanguageVersion() != null && !project.getLanguageVersion().isBlank() ? " (version " + project.getLanguageVersion() + ")" : ""),
-          project.getLanguage(),
-          project.getLanguage(),
-          (project.getFramework() != null && !project.getFramework().isBlank() ? "/" + project.getFramework() : ""));
-    }
-
     // Category scope constraint — inserted after language MANDATORY so Gemini knows the layer scope
     String categoryScope = isCategorySpecific
         ? String.format(
@@ -817,7 +709,7 @@ public class AntiGravityService {
         : "";
 
     // 2. Build prompt
-    String prompt = mandatoryImpl + categoryScope + """
+    String prompt = categoryScope + """
 
         You are a senior full-stack developer. Your task is to implement the ACTUAL SOURCE CODE for a specific feature based on the plan, tech stack, existing project file/folder structure, and detected dependencies/needs provided.
 
@@ -849,14 +741,14 @@ public class AntiGravityService {
           ]
         }
 
-        """ + stackInfo + linkedStackInfo + featureNeedsInfo + projectStructureInfo + """
+        """ + featureNeedsInfo + projectStructureInfo + """
 
         Feature Description:
         """ + feature.getDescription() + "\n\nTasks to implement (" + (isCategorySpecific ? taskType + " layer only" : "all layers") + "):\n" + taskList.toString();
 
     log.info("Calling Gemini to implement plan for feature: '{}' (category: {})",
         feature.getName(), isCategorySpecific ? taskType : "All");
-    String aiResponse = aiClient.generateContent(prompt);
+    String aiResponse = generateAiResponseWithContext(feature.getProjectId(), prompt, true);
 
     try {
       String cleanedResponse = aiResponse
@@ -977,7 +869,7 @@ public class AntiGravityService {
         """.formatted(feature.getName(), taskList);
 
     log.info("Calling Gemini for sprint generation of feature: {}", feature.getName());
-    String aiResponse = aiClient.generateContent(prompt);
+    String aiResponse = generateAiResponseWithContext(feature.getProjectId(), prompt, false);
 
     try {
       String cleanedResponse = aiResponse
@@ -1109,7 +1001,8 @@ public class AntiGravityService {
         """.formatted(taskList);
 
     log.info("Calling Gemini for dependency detection on feature: {}", featureId);
-    String aiResponse = aiClient.generateContent(prompt);
+    Long projectId = tasks.isEmpty() ? null : tasks.get(0).getProjectId();
+    String aiResponse = generateAiResponseWithContext(projectId, prompt, false);
 
     try {
       String cleanedResponse = aiResponse
@@ -1164,7 +1057,7 @@ public class AntiGravityService {
 
       log.info("Detected {} dependencies for feature {}", result.size(), featureId);
       
-      Long projectId = tasks.isEmpty() ? null : tasks.get(0).getProjectId();
+      projectId = tasks.isEmpty() ? null : tasks.get(0).getProjectId();
       activityLogService.logCurrentUserActivity(projectId, "Detected Dependencies", "Detected task dependencies for feature ID: " + featureId);
       
       return result;
@@ -1273,8 +1166,38 @@ public class AntiGravityService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // Core AI Execution Wrapper
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  private String buildMandatoryStackConstraint(Long projectId) {
+    if (projectId == null) return "";
+    com.developerev.model.Project project = projectRepository.findById(projectId).orElse(null);
+    if (project == null || project.getLanguage() == null || project.getLanguage().isBlank()) return "";
+    
+    return String.format(
+        "MANDATORY: You MUST write ALL code EXCLUSIVELY in %s%s%s. "
+        + "Do NOT generate code in any other language or framework under any circumstances. "
+        + "Every file you produce must be a valid %s file.",
+        project.getLanguage(),
+        (project.getFramework() != null && !project.getFramework().isBlank() ? " with " + project.getFramework() : ""),
+        (project.getLanguageVersion() != null && !project.getLanguageVersion().isBlank() ? " (version " + project.getLanguageVersion() + ")" : ""),
+        project.getLanguage());
+  }
+
+  private String generateAiResponseWithContext(Long projectId, String corePrompt, boolean enforceStack) {
+    String projectContext = buildProjectContextPromptString(projectId);
+    String mandatoryStack = enforceStack ? buildMandatoryStackConstraint(projectId) + "\n\n" : "";
+    
+    // We place mandatory rules at the very top, followed by the core prompt, followed by project context
+    String finalPrompt = mandatoryStack + corePrompt + "\n\n" + projectContext;
+    
+    return aiClient.generateContent(finalPrompt);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // AI Architecture Generator
   // ─────────────────────────────────────────────────────────────────────────────
+
 
   public String buildProjectContextPromptString(Long projectId) {
     if (projectId == null) {
@@ -1320,6 +1243,23 @@ public class AntiGravityService {
       sb.append(project.getAiBusinessContext()).append("\n");
       sb.append("----------------------------------------------------------\n");
     }
+
+    if (project.getRelatedProjectId() != null) {
+      com.developerev.model.Project linked = projectRepository.findById(project.getRelatedProjectId()).orElse(null);
+      if (linked != null) {
+        String companion = "FRONTEND".equals(project.getProjectType()) ? "Backend" : "Frontend";
+        sb.append("\n=== LINKED ").append(companion.toUpperCase()).append(" PROJECT CONTEXT ===\n");
+        sb.append("Project Name: ").append(linked.getName()).append("\n");
+        if (linked.getLanguage() != null && !linked.getLanguage().isBlank()) sb.append("Language: ").append(linked.getLanguage()).append("\n");
+        if (linked.getFramework() != null && !linked.getFramework().isBlank()) sb.append("Framework: ").append(linked.getFramework()).append("\n");
+        if (linked.getDatabaseName() != null && !linked.getDatabaseName().isBlank()) sb.append("Database: ").append(linked.getDatabaseName()).append("\n");
+        if (linked.getDependencies() != null && !linked.getDependencies().isBlank()) sb.append("Dependencies: ").append(linked.getDependencies()).append("\n");
+        if (linked.getAiBusinessContext() != null && !linked.getAiBusinessContext().isBlank()) {
+            sb.append("AI Business Context: ").append(linked.getAiBusinessContext()).append("\n");
+        }
+      }
+    }
+
 
     sb.append("=========================================\n");
     return sb.toString();
@@ -1473,8 +1413,49 @@ public class AntiGravityService {
     return "BACKEND"; // Java, Python, Go, C#, etc. → backend by default
   }
 
+  private String resolveProjectDatabase(Long projectId) {
+    if (projectId == null) {
+      return "PostgreSQL";
+    }
+    com.developerev.model.Project project = projectRepository.findById(projectId).orElse(null);
+    if (project == null) {
+      return "PostgreSQL";
+    }
+
+    // 1. If databaseName is explicitly set, use it.
+    if (project.getDatabaseName() != null && !project.getDatabaseName().trim().isEmpty() && !project.getDatabaseName().equalsIgnoreCase("None")) {
+      return project.getDatabaseName().trim();
+    }
+
+    // 2. Scan features to see if a database is in the detectedNeeds
+    try {
+      List<Feature> features = featureRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+      if (features != null) {
+        List<String> knownDbs = List.of("MySQL", "PostgreSQL", "MongoDB", "SQLite", "Redis", "Oracle", "MariaDB", "Cassandra", "DynamoDB");
+        for (Feature feature : features) {
+          String needs = feature.getDetectedNeeds();
+          if (needs != null && !needs.isEmpty()) {
+            for (String db : knownDbs) {
+              if (java.util.regex.Pattern.compile("\\b" + db + "\\b", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(needs).find()) {
+                // Persist it so the project details are synchronized and future calls find it immediately
+                project.setDatabaseName(db);
+                projectRepository.save(project);
+                log.info("[STACK_SYNC] Detected database '{}' from feature planner needs and saved to project {}", db, projectId);
+                return db;
+              }
+            }
+          }
+        }
+      }
+    } catch (Exception e) {
+      log.warn("Failed to auto-detect project database from features", e);
+    }
+
+    return "PostgreSQL";
+  }
+
   public ArchitectureResponseDto generateArchitecture(ArchitectureRequestDto request) {
-    String projectContext = buildProjectContextPromptString(request.getProjectId());
+    String dbName = resolveProjectDatabase(request.getProjectId());
 
     // ── Detect project type from tech stack ───────────────────────────────────
     String projectType = detectProjectType(request.getProjectId());
@@ -1512,14 +1493,15 @@ public class AntiGravityService {
 
           Include both:
           - Frontend modules (Pages, Components, State stores, API service layers) — set "database" to "none"
-          - Backend services with their databases
+          - Backend services with their databases. All backend services that require a database MUST use "%s".
           - Clear data flow events between frontend and backend layers
 
           STRICT RULES:
           1. Every "producer" and "consumer" in "events" MUST be copied character-for-character from a "name" value in "services".
           2. Clearly separate frontend modules (suffix: "Page", "Component", "Store") from backend services (suffix: "Service", "Controller").
           3. Every service must connect to at least one event.
-          """;
+          4. Use "%s" as the database name for all backend databases.
+          """.formatted(dbName, dbName);
     } else {
       // Default: BACKEND / UNKNOWN
       typeSpecificInstructions = """
@@ -1530,22 +1512,18 @@ public class AntiGravityService {
           2. Do NOT invent new names for producers or consumers. Only reuse existing service names.
           3. Every service must connect to at least one event (as producer OR consumer).
           4. Use short, clear service names (e.g. "AuthService", "OrderService").
-          """;
+          5. Every service that stores state must use "%s" as its database.
+          """.formatted(dbName);
     }
 
-    String prompt = """
-        You are a senior software architect.
-        Return ONLY valid JSON. No markdown. No ``` markers. No explanations.
-
-        """ + typeSpecificInstructions + """
-
+    String responseFormat = """
         Response Format:
         {
           "services": [
             {
               "name": "AuthService",
               "description": "Handles user registration, login, JWT token issuance and validation.",
-              "database": "PostgreSQL"
+              "database": "%s"
             }
           ],
           "apis": [
@@ -1563,13 +1541,19 @@ public class AntiGravityService {
             }
           ]
         }
-        """ + projectContext + """
+        """.formatted("FRONTEND".equals(projectType) ? "none" : dbName);
+
+    String prompt = """
+        You are a senior software architect.
+        Return ONLY valid JSON. No markdown. No ``` markers. No explanations.
+
+        """ + typeSpecificInstructions + "\n\n" + responseFormat + """
 
         Idea / Requirements:
         """ + request.getIdea();
 
 
-    String aiResponse = aiClient.generateContent(prompt);
+    String aiResponse = generateAiResponseWithContext(request.getProjectId(), prompt, false);
 
     try {
       String cleanedResponse = aiResponse
@@ -1596,8 +1580,9 @@ public class AntiGravityService {
   // ─────────────────────────────────────────────────────────────────────────────
 
   public DatabaseSchemaResponseDto generateDatabaseSchema(String featureDescription, Long projectId) {
-    String projectContext = buildProjectContextPromptString(projectId);
-    String prompt = """
+    String dbName = resolveProjectDatabase(projectId);
+    
+    String prompt = "MANDATORY: Generate a schema specifically tailored for the " + dbName + " database dialect.\n\n" + """
         You are a senior database architect.
         
         Convert the following user feature description into an optimized database schema.
@@ -1632,13 +1617,12 @@ public class AntiGravityService {
             "INDEX idx_user_id ON Orders(user_id)"
           ]
         }
-        """ + projectContext + """
         
         Feature Description:
         """ + featureDescription;
 
     log.info("Calling Gemini for Database Schema Generation: {}", featureDescription);
-    String aiResponse = aiClient.generateContent(prompt);
+    String aiResponse = generateAiResponseWithContext(projectId, prompt, false);
 
     try {
       String cleanedResponse = aiResponse
@@ -1677,9 +1661,9 @@ public class AntiGravityService {
       throw new IllegalArgumentException("analysisType cannot be null");
     }
 
-    String knowledgeContext = buildProjectContextPromptString(request.getProjectId()) + knowledgeService.buildKnowledgePromptString();
-
     String prompt = "";
+    boolean enforceStack = false;
+    String knowledgeServiceContext = "\n" + knowledgeService.buildKnowledgePromptString();
 
     switch (type.toLowerCase()) {
       case "explain":
@@ -1692,7 +1676,7 @@ public class AntiGravityService {
             5. Improvement suggestions
 
             CODE:
-            """ + request.getCode() + knowledgeContext;
+            """ + request.getCode() + knowledgeServiceContext;
         break;
       case "debug":
         String errorContent = request.getErrorLog() != null ? request.getErrorLog() : request.getCode();
@@ -1710,7 +1694,7 @@ public class AntiGravityService {
             5. Prevention tips
 
             ERROR:
-            """ + errorContent + knowledgeContext;
+            """ + errorContent + knowledgeServiceContext;
         break;
       case "architecture":
         prompt = """
@@ -1722,7 +1706,7 @@ public class AntiGravityService {
             5. Refactoring suggestions
 
             CODEBASE:
-            """ + request.getCode() + knowledgeContext;
+            """ + request.getCode() + knowledgeServiceContext;
         break;
       case "performance":
         prompt = """
@@ -1740,7 +1724,7 @@ public class AntiGravityService {
             Provide optimized suggestions.
 
             CODE:
-            """ + request.getCode() + knowledgeContext;
+            """ + request.getCode() + knowledgeServiceContext;
         break;
       case "edge-case":
         prompt = """
@@ -1752,7 +1736,7 @@ public class AntiGravityService {
             4. Recommended checks
 
             CODE:
-            """ + request.getCode() + knowledgeContext;
+            """ + request.getCode() + knowledgeServiceContext;
         break;
       case "complexity":
         prompt = """
@@ -1763,9 +1747,10 @@ public class AntiGravityService {
             4. Optimization suggestions
 
             CODE:
-            """ + request.getCode() + knowledgeContext;
+            """ + request.getCode() + knowledgeServiceContext;
         break;
       case "refactor":
+        enforceStack = true;
         prompt = """
             You are a senior software architect.
 
@@ -1780,7 +1765,7 @@ public class AntiGravityService {
             5. Improved structure
 
             CODE:
-            """ + request.getCode() + knowledgeContext;
+            """ + request.getCode() + knowledgeServiceContext;
         break;
       case "security-scan":
         prompt = """
@@ -1797,9 +1782,10 @@ public class AntiGravityService {
             5. Sensitive data exposure
 
             CODE:
-            """ + request.getCode() + knowledgeContext;
+            """ + request.getCode() + knowledgeServiceContext;
         break;
       case "test-generator":
+        enforceStack = true;
         prompt = """
             Generate unit tests for this code.
 
@@ -1809,12 +1795,13 @@ public class AntiGravityService {
             2. Edge cases
             3. Failure cases
 
-            Use JUnit 5.
+            Use standard testing frameworks appropriate for the project stack.
 
             CODE:
-            """ + request.getCode() + knowledgeContext;
+            """ + request.getCode() + knowledgeServiceContext;
         break;
       case "generate-docs":
+        enforceStack = true;
         prompt = """
             Generate developer documentation.
 
@@ -1825,14 +1812,14 @@ public class AntiGravityService {
             3. Usage examples
 
             CODE:
-            """ + request.getCode() + knowledgeContext;
+            """ + request.getCode() + knowledgeServiceContext;
         break;
       default:
         throw new IllegalArgumentException("Unknown analysisType: " + type);
     }
 
     log.info("Calling Gemini for {} analysis", type);
-    String aiResponse = aiClient.generateContent(prompt);
+    String aiResponse = generateAiResponseWithContext(request.getProjectId(), prompt, enforceStack);
 
     try {
       String answer = aiResponse.replace("```markdown", "").replace("```", "").trim();
