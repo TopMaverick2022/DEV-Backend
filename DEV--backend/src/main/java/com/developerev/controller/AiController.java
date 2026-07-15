@@ -6,7 +6,6 @@ import com.developerev.dto.TaskDependencyDto;
 import com.developerev.dto.DatabaseIntelligenceRequestDto;
 import com.developerev.dto.DatabaseSchemaResponseDto;
 import com.developerev.dto.AiAnalysisRequest;
-import com.developerev.dto.SystemQueryRequestDto;
 import com.developerev.dto.SystemQueryResponseDto;
 import com.developerev.dto.KnowledgeRequestDto;
 import com.developerev.dto.KnowledgeResponseDto;
@@ -26,6 +25,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 import java.util.Map;
 
+@SuppressWarnings("null")
 @RestController
 @RequestMapping("/api/ai")
 @RequiredArgsConstructor
@@ -39,8 +39,6 @@ public class AiController {
     private final ObjectMapper objectMapper;
     private final com.developerev.service.GitService gitService;
     private final com.developerev.repository.ProjectRepository projectRepository;
-    private final com.developerev.service.GeminiClient geminiClient;
-
 
     /**
      * POST /ai/generate-sprints/{featureId}

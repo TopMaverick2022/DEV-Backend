@@ -1,7 +1,6 @@
 package com.developerev.ai.service;
 
 import com.developerev.ai.dto.ProviderResponse;
-import com.developerev.ai.prompt.PromptBuilder;
 import com.developerev.ai.prompt.PromptType;
 import com.developerev.ai.provider.LLMProvider;
 import com.developerev.ai.tracker.TokenUsageTracker;
@@ -12,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 
+@SuppressWarnings("null")
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -21,7 +21,6 @@ public class AIService {
     // Example: GeminiProviderImpl, OpenAIProviderImpl
     private final List<LLMProvider> providers;
 
-    private final PromptBuilder promptBuilder;
     private final TokenUsageTracker tokenTracker;
     // Note: If using the proxy method 'askAI', we need a way to look up the user.
     // In our current architecture, processRequest relies on passing the User object

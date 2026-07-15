@@ -6,7 +6,6 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Entity
 @Table(name = "projects")
@@ -23,6 +22,7 @@ public class Project {
      * FRONTEND   = a frontend-only project that pairs with a separate backend project
      * BACKEND    = a backend-only project that pairs with a separate frontend project
      */
+    @Builder.Default
     @Column(name = "project_type", nullable = false)
     private String projectType = "STANDALONE";
 

@@ -21,6 +21,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.Arrays;
 import java.util.List;
 
+@SuppressWarnings("null")
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {

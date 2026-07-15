@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 
+@SuppressWarnings("null")
 @Slf4j
 @RestController
 @RequestMapping("/api/ai")

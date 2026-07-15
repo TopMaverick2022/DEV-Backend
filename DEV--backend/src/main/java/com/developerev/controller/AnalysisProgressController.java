@@ -15,11 +15,9 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.function.Consumer;
 
 /**
  * Streams real-time analysis progress to the frontend via Server-Sent Events (SSE).
@@ -31,6 +29,7 @@ import java.util.function.Consumer;
  *   data: COMPLETE
  *   data: ERROR:<message>
  */
+@SuppressWarnings("null")
 @Slf4j
 @RestController
 @RequestMapping("/api/ai")

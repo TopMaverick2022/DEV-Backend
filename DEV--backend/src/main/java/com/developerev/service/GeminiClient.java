@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Implements AiClient to return extracted text.
  * Supports multiple API keys with automatic rotation on quota/rate limits.
  */
+@SuppressWarnings("null")
 @Slf4j
 @Service("geminiClient")
 public class GeminiClient implements AiClient {

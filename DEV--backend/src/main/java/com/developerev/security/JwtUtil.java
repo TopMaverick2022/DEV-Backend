@@ -11,6 +11,7 @@ import java.security.Key;
 import java.util.Date;
 import java.util.function.Function;
 
+@SuppressWarnings("null")
 @Component
 public class JwtUtil {
 

@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import jakarta.validation.Valid;
 import java.util.Arrays;
 
+@SuppressWarnings("null")
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
