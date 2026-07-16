@@ -99,6 +99,65 @@ public class AIController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/architecture/project/{projectId}")
+    public ResponseEntity<?> getArchitectureByProject(@PathVariable Long projectId) {
+        com.developerev.model.ArchitecturePlan plan = antiGravityService.getArchitecturePlan(projectId);
+        if (plan == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(plan);
+    }
+
+    @GetMapping("/architecture/project/{projectId}/all")
+    public ResponseEntity<?> getAllArchitectureByProject(@PathVariable Long projectId) {
+        return ResponseEntity.ok(antiGravityService.getAllArchitecturePlans(projectId));
+    }
+
+    @GetMapping("/architecture/{id}")
+    public ResponseEntity<?> getArchitectureById(@PathVariable Long id) {
+        com.developerev.model.ArchitecturePlan plan = antiGravityService.getArchitecturePlanById(id);
+        if (plan == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(plan);
+    }
+
+    @PutMapping("/architecture/{id}")
+    public ResponseEntity<?> updateArchitecture(@PathVariable Long id, @RequestBody java.util.Map<String, String> payload) {
+        String json = payload.get("architectureJson");
+        return ResponseEntity.ok(antiGravityService.updateArchitecturePlan(id, json));
+    }
+
+    @DeleteMapping("/architecture/{id}")
+    public ResponseEntity<?> deleteArchitecture(@PathVariable Long id) {
+        antiGravityService.deleteArchitecturePlan(id);
+        return ResponseEntity.ok(java.util.Map.of("message", "Deleted architecture successfully"));
+    }
+
+    // --- UML Endpoints ---
+
+    @PostMapping("/uml/generate")
+    public ResponseEntity<?> generateUmlDiagram(@RequestBody com.developerev.dto.UmlDiagramRequestDto request) {
+        return ResponseEntity.ok(antiGravityService.generateUmlDiagram(request));
+    }
+
+    @GetMapping("/uml/project/{projectId}")
+    public ResponseEntity<?> getUmlDiagramsByProject(@PathVariable Long projectId) {
+        return ResponseEntity.ok(antiGravityService.getUmlDiagrams(projectId));
+    }
+
+    @PutMapping("/uml/{id}")
+    public ResponseEntity<?> updateUmlDiagram(@PathVariable Long id, @RequestBody java.util.Map<String, String> payload) {
+        String mermaidCode = payload.get("mermaidCode");
+        return ResponseEntity.ok(antiGravityService.updateUmlDiagram(id, mermaidCode));
+    }
+
+    @DeleteMapping("/uml/{id}")
+    public ResponseEntity<?> deleteUmlDiagram(@PathVariable Long id) {
+        antiGravityService.deleteUmlDiagram(id);
+        return ResponseEntity.ok(java.util.Map.of("message", "Deleted UML diagram successfully"));
+    }
+
     @PostMapping("/recommend-dependencies")
     public ResponseEntity<?> recommendDependencies(@RequestBody com.developerev.dto.RecommendDependenciesRequestDto request) {
         return ResponseEntity.ok(antiGravityService.recommendDependencies(request));

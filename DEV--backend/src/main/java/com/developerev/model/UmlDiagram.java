@@ -6,27 +6,27 @@ import lombok.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "architecture_plans")
+@Table(name = "uml_diagrams")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class ArchitecturePlan {
+public class UmlDiagram {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    
+
     private Long projectId;
 
-    /** The original project idea submitted by the user. */
     @Column(columnDefinition = "TEXT")
-    private String projectIdea;
+    private String name;
 
-    /** Raw JSON string of the full AI-generated architecture blueprint. */
+    private String type; // e.g. "Sequence", "Class", "State", "Entity-Relationship"
+
     @Column(columnDefinition = "TEXT")
-    private String architectureJson;
+    private String mermaidCode;
 
     private LocalDateTime createdAt;
 

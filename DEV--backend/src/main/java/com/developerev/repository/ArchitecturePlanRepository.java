@@ -6,4 +6,6 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface ArchitecturePlanRepository extends JpaRepository<ArchitecturePlan, Long> {
+    java.util.List<ArchitecturePlan> findByProjectId(Long projectId);
+    java.util.List<ArchitecturePlan> findByProjectIdOrderByCreatedAtDesc(Long projectId);
 }

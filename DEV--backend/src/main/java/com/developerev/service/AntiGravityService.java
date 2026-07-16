@@ -53,6 +53,8 @@ public class AntiGravityService {
   private final ActivityLogService activityLogService;
   private final GitService gitService;
   private final com.developerev.repository.ProjectRepository projectRepository;
+  private final com.developerev.repository.ArchitecturePlanRepository architecturePlanRepository;
+  private final com.developerev.repository.UmlDiagramRepository umlDiagramRepository;
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Auto Stack Detection from Cloned Repo
@@ -588,7 +590,7 @@ public class AntiGravityService {
             for (String need : responseDto.getDetectedNeeds()) {
               boolean found = false;
               for (String db : knownDbs) {
-                if (need.trim().equalsIgnoreCase(db)) {
+                if (need.toLowerCase().contains(db.toLowerCase())) {
                   currentProject.setDatabaseName(db);
                   projectRepository.save(currentProject);
                   log.info("[PLAN_SYNC] Automatically set project database to '{}' based on detected feature needs", db);
@@ -1436,7 +1438,7 @@ public class AntiGravityService {
           String needs = feature.getDetectedNeeds();
           if (needs != null && !needs.isEmpty()) {
             for (String db : knownDbs) {
-              if (java.util.regex.Pattern.compile("\\b" + db + "\\b", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(needs).find()) {
+              if (needs.toLowerCase().contains(db.toLowerCase())) {
                 // Persist it so the project details are synchronized and future calls find it immediately
                 project.setDatabaseName(db);
                 projectRepository.save(project);
@@ -1543,6 +1545,14 @@ public class AntiGravityService {
         }
         """.formatted("FRONTEND".equals(projectType) ? "none" : dbName);
 
+    List<com.developerev.model.Feature> features = featureRepository.findByProjectIdOrderByCreatedAtDesc(request.getProjectId());
+    String plannedFeatures = "";
+    if (features != null && !features.isEmpty()) {
+      plannedFeatures = "\n\nPlanned Features from Planner:\n" + features.stream()
+          .map(f -> "- " + f.getName() + ": " + f.getDescription())
+          .reduce("", (a, b) -> a + b + "\n");
+    }
+
     String prompt = """
         You are a senior software architect.
         Return ONLY valid JSON. No markdown. No ``` markers. No explanations.
@@ -1550,7 +1560,7 @@ public class AntiGravityService {
         """ + typeSpecificInstructions + "\n\n" + responseFormat + """
 
         Idea / Requirements:
-        """ + request.getIdea();
+        """ + request.getIdea() + plannedFeatures;
 
 
     String aiResponse = generateAiResponseWithContext(request.getProjectId(), prompt, false);
@@ -1568,11 +1578,160 @@ public class AntiGravityService {
           .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature(), true)
           .configure(com.fasterxml.jackson.core.json.JsonReadFeature.ALLOW_BACKSLASH_ESCAPING_ANY_CHARACTER.mappedFeature(), true);
           
-      return localMapper.readValue(cleanedResponse, ArchitectureResponseDto.class);
+      ArchitectureResponseDto result = localMapper.readValue(cleanedResponse, ArchitectureResponseDto.class);
+      
+      com.developerev.model.ArchitecturePlan plan = com.developerev.model.ArchitecturePlan.builder()
+          .projectId(request.getProjectId())
+          .projectIdea(request.getIdea())
+          .architectureJson(cleanedResponse)
+          .build();
+      plan = architecturePlanRepository.save(plan);
+      
+      result.setPlanId(plan.getId());
+      activityLogService.logCurrentUserActivity(request.getProjectId(), "Generated Architecture", "Generated new architecture diagram");
+      
+      return result;
     } catch (Exception e) {
       log.error("Failed to parse AI response for architecture: {}", aiResponse, e);
       throw new RuntimeException("Failed to generate architecture: " + e.getMessage(), e);
     }
+  }
+
+  public com.developerev.model.ArchitecturePlan getArchitecturePlan(Long projectId) {
+    java.util.List<com.developerev.model.ArchitecturePlan> plans = architecturePlanRepository.findByProjectIdOrderByCreatedAtDesc(projectId);
+    if (plans.isEmpty()) return null;
+    return plans.get(0);
+  }
+
+  public com.developerev.model.ArchitecturePlan getArchitecturePlanById(Long id) {
+    return architecturePlanRepository.findById(id).orElse(null);
+  }
+
+  public java.util.List<java.util.Map<String, Object>> getAllArchitecturePlans(Long projectId) {
+    return architecturePlanRepository.findByProjectIdOrderByCreatedAtDesc(projectId).stream()
+        .map(plan -> {
+            java.util.Map<String, Object> map = new java.util.HashMap<>();
+            map.put("id", plan.getId());
+            map.put("projectId", plan.getProjectId());
+            map.put("projectIdea", plan.getProjectIdea());
+            map.put("createdAt", plan.getCreatedAt());
+            return map;
+        })
+        .toList();
+  }
+
+  public void deleteArchitecturePlan(Long id) {
+    architecturePlanRepository.deleteById(id);
+  }
+
+  public com.developerev.model.ArchitecturePlan updateArchitecturePlan(Long id, String json) {
+    com.developerev.model.ArchitecturePlan plan = architecturePlanRepository.findById(id)
+      .orElseThrow(() -> new RuntimeException("Architecture Plan not found"));
+    plan.setArchitectureJson(json);
+    return architecturePlanRepository.save(plan);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // UML Diagram Engine
+  // ─────────────────────────────────────────────────────────────────────────────
+  
+  public com.developerev.dto.UmlDiagramResponseDto generateUmlDiagram(com.developerev.dto.UmlDiagramRequestDto request) {
+    List<com.developerev.model.Feature> features = featureRepository.findByProjectIdOrderByCreatedAtDesc(request.getProjectId());
+    String plannedFeatures = "";
+    if (features != null && !features.isEmpty()) {
+      plannedFeatures = "\n\nPlanned Features from Planner:\n" + features.stream()
+          .map(f -> "- " + f.getName() + ": " + f.getDescription())
+          .reduce("", (a, b) -> a + b + "\n");
+    }
+    
+    String typeForPrompt = request.getType();
+    boolean isUseCase = "useCaseDiagram".equals(typeForPrompt);
+
+    // Build architecture context string from the latest saved plan (if any)
+    String archContext = "";
+    com.developerev.model.ArchitecturePlan latestPlan = getArchitecturePlan(request.getProjectId());
+    if (latestPlan != null && latestPlan.getArchitectureJson() != null) {
+      archContext = "\n\nExisting Architecture Plan:\n" + latestPlan.getArchitectureJson();
+    }
+    
+    String prompt;
+    if (isUseCase) {
+        prompt = """
+            You are a senior software architect and UML expert.
+            Generate a Use Case Diagram using a JointJS JSON payload.
+            The diagram should reflect the following project context and features.
+            
+            IMPORTANT: Return ONLY a raw JSON string representing a JointJS graph. Do NOT include markdown formatting like ```json or any other text.
+            The JSON MUST conform to `joint.dia.Graph` JSON representation, containing a `cells` array with actors and use cases.
+            Use `standard.Rectangle` for actors and `standard.Ellipse` for use cases. Connect them with `standard.Link`.
+            
+            Example JSON Structure:
+            {
+              "cells": [
+                { "type": "standard.Rectangle", "position": { "x": 100, "y": 100 }, "size": { "width": 80, "height": 40 }, "attrs": { "label": { "text": "User", "fill": "#ffffff" }, "body": { "fill": "#333333", "rx": 5, "ry": 5 } }, "id": "actor1" },
+                { "type": "standard.Ellipse", "position": { "x": 300, "y": 90 }, "size": { "width": 120, "height": 60 }, "attrs": { "label": { "text": "Login", "fill": "#ffffff" }, "body": { "fill": "#444444" } }, "id": "uc1" },
+                { "type": "standard.Link", "source": { "id": "actor1" }, "target": { "id": "uc1" }, "attrs": { "line": { "stroke": "#ffffff" } } }
+              ]
+            }
+            
+            Additional Context: %s
+            """.formatted(request.getContext()) + plannedFeatures + archContext;
+    } else {
+        prompt = """
+            You are a senior software architect and UML expert.
+            Generate a strictly valid Mermaid.js diagram of type: %s.
+            The diagram should reflect the following project context and features.
+            
+            Only return the raw Mermaid.js code block. Do NOT include Markdown formatting like ```mermaid or ```.
+            Return JUST the code starting with the appropriate Mermaid keyword (e.g., sequenceDiagram, classDiagram, flowchart TD, etc.).
+            
+            Additional Context: %s
+            """.formatted(typeForPrompt, request.getContext()) + plannedFeatures + archContext;
+    }
+
+    String aiResponse = generateAiResponseWithContext(request.getProjectId(), prompt, false);
+    
+    String cleanedResponse = aiResponse.trim();
+    if (cleanedResponse.startsWith("```mermaid")) {
+        cleanedResponse = cleanedResponse.substring(10);
+    } else if (cleanedResponse.startsWith("```json")) {
+        cleanedResponse = cleanedResponse.substring(7);
+    } else if (cleanedResponse.startsWith("```")) {
+        cleanedResponse = cleanedResponse.substring(3);
+    }
+    if (cleanedResponse.endsWith("```")) {
+        cleanedResponse = cleanedResponse.substring(0, cleanedResponse.length() - 3);
+    }
+    cleanedResponse = cleanedResponse.trim();
+
+    com.developerev.model.UmlDiagram diagram = com.developerev.model.UmlDiagram.builder()
+        .projectId(request.getProjectId())
+        .name(request.getName())
+        .type(request.getType())
+        .mermaidCode(cleanedResponse)
+        .build();
+        
+    diagram = umlDiagramRepository.save(diagram);
+    activityLogService.logCurrentUserActivity(request.getProjectId(), "Generated UML", "Generated new " + request.getType() + " diagram");
+    return new com.developerev.dto.UmlDiagramResponseDto(diagram);
+  }
+
+  public java.util.List<com.developerev.dto.UmlDiagramResponseDto> getUmlDiagrams(Long projectId) {
+    return umlDiagramRepository.findByProjectId(projectId).stream()
+        .map(com.developerev.dto.UmlDiagramResponseDto::new)
+        .toList();
+  }
+
+  public com.developerev.dto.UmlDiagramResponseDto updateUmlDiagram(Long id, String mermaidCode) {
+    com.developerev.model.UmlDiagram diagram = umlDiagramRepository.findById(id)
+        .orElseThrow(() -> new RuntimeException("UML diagram not found"));
+    diagram.setMermaidCode(mermaidCode);
+    diagram = umlDiagramRepository.save(diagram);
+    return new com.developerev.dto.UmlDiagramResponseDto(diagram);
+  }
+
+  public void deleteUmlDiagram(Long id) {
+    umlDiagramRepository.deleteById(id);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
