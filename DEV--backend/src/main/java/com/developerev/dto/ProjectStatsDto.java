@@ -11,6 +11,7 @@ public class ProjectStatsDto {
     private int totalBugs;
     private int totalSecurityIssues;
     private int totalPerformanceIssues;
+    private int totalCodeQualityIssues;
     private String techDebtEstimate;
     private String syncStatus; // "SYNCED", "OUT_OF_SYNC", "UNKNOWN"
 }

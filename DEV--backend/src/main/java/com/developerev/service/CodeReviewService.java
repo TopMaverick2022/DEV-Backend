@@ -241,6 +241,7 @@ public class CodeReviewService {
                                     .bugCount(cachedReview.getBugCount())
                                     .securityCount(cachedReview.getSecurityCount())
                                     .performanceCount(cachedReview.getPerformanceCount())
+                                    .codeQualityCount(cachedReview.getCodeQualityCount())
                                     .build());
 
                     FileReviewDto dto = new FileReviewDto();
@@ -529,7 +530,7 @@ public class CodeReviewService {
 
     /** Counts issues by type and persists the CodeReview entity. */
     private void persistReview(Long fileId, String language, FileReviewDto review) {
-        int bugs = 0, security = 0, performance = 0;
+        int bugs = 0, security = 0, performance = 0, codeQuality = 0;
         if (review.getIssues() != null) {
             for (FileReviewDto.IssueDto issue : review.getIssues()) {
                 if (issue.getType() != null) {
@@ -537,6 +538,7 @@ public class CodeReviewService {
                         case "bug" -> bugs++;
                         case "security" -> security++;
                         case "performance" -> performance++;
+                        case "codequality", "code quality", "code_quality", "quality" -> codeQuality++;
                     }
                 }
             }
@@ -551,6 +553,7 @@ public class CodeReviewService {
                         .bugCount(bugs)
                         .securityCount(security)
                         .performanceCount(performance)
+                        .codeQualityCount(codeQuality)
                         .build());
     }
 

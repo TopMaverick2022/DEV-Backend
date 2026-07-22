@@ -265,7 +265,7 @@ public class ProjectService {
                 .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException("Project not found"));
         getOrAssignAdminMember(project, userRepository.findByUsername(username).orElseThrow());
 
-        int bugs = 0, security = 0, perf = 0;
+        int bugs = 0, security = 0, perf = 0, codeQuality = 0;
         int filesAnalyzed = 0;
 
         com.developerev.model.CodeProject cp = codeProjectRepository.findTopByLinkedProjectIdOrderByIdDesc(project.getId());
@@ -282,18 +282,19 @@ public class ProjectService {
                     bugs += r.getBugCount();
                     security += r.getSecurityCount();
                     perf += r.getPerformanceCount();
+                    codeQuality += r.getCodeQualityCount();
                 }
             }
         }
 
         // Calculate health score: use an inverse proportion to prevent exactly 0% while remaining accurate
-        double penalty = (bugs * 2.0) + (security * 5.0) + (perf * 1.0);
+        double penalty = (bugs * 2.0) + (security * 5.0) + (perf * 1.0) + (codeQuality * 0.5);
         double healthScore = 100.0 * (100.0 / (100.0 + penalty));
         healthScore = Math.round(healthScore * 10.0) / 10.0;
         if (filesAnalyzed == 0) healthScore = 0.0; // Unknown health if no analysis
 
-        // Estimate tech debt (1 bug = 1h, security = 3h, perf = 0.5h)
-        double hours = bugs * 1.0 + security * 3.0 + perf * 0.5;
+        // Estimate tech debt (1 bug = 1h, security = 3h, perf = 0.5h, codeQuality = 0.25h)
+        double hours = bugs * 1.0 + security * 3.0 + perf * 0.5 + codeQuality * 0.25;
         String techDebt = hours > 0 ? String.format("%.1fh", hours) : "0h";
 
         // Determine Sync Status
@@ -322,6 +323,7 @@ public class ProjectService {
                 .totalBugs(bugs)
                 .totalSecurityIssues(security)
                 .totalPerformanceIssues(perf)
+                .totalCodeQualityIssues(codeQuality)
                 .techDebtEstimate(techDebt)
                 .syncStatus(syncStatus)
                 .build();

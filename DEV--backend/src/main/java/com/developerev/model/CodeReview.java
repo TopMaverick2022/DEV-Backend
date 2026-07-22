@@ -53,4 +53,8 @@ public class CodeReview {
     /** Number of Performance-type issues found in this file. */
     @Builder.Default
     private int performanceCount = 0;
+
+    /** Number of CodeQuality-type issues found in this file. */
+    @Builder.Default
+    private int codeQualityCount = 0;
 }

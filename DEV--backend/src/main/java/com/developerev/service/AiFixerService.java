@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import jakarta.transaction.Transactional;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -104,6 +105,7 @@ public class AiFixerService {
      * @param filePath        relative path inside the workspace, e.g. "src/main/App.java"
      * @return map with keys: fixedCode (String), summary (String), originalCode (String)
      */
+    @Transactional
     public Map<String, Object> fixFile(Long masterProjectId, String filePath) {
         // 1. Locate the workspace root
         File workspaceDir = gitService.getRepoDir(masterProjectId);
@@ -170,6 +172,48 @@ public class AiFixerService {
 
         // 8. Build a short summary by asking AI what changed
         String summary = buildChangeSummary(filePath, language, issues);
+
+        // 8.5 Write the fixed code back to the workspace file on disk
+        try {
+            Files.writeString(sourcePath, fixedCode, StandardCharsets.UTF_8);
+            log.info("Saved fixed code to disk: {}", sourcePath);
+        } catch (Exception e) {
+            log.error("Failed to write fixed code to file: {}", sourcePath, e);
+            throw new RuntimeException("Failed to save fixed code to disk: " + e.getMessage(), e);
+        }
+
+        // Force Git to track this modification so the Project Explorer immediately sees it
+        try {
+            File repoDir = gitService.getRepoDir(masterProjectId);
+            if (new File(repoDir, ".git").exists()) {
+                try (org.eclipse.jgit.api.Git git = org.eclipse.jgit.api.Git.open(repoDir)) {
+                    git.add().addFilepattern(filePath).call();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to stage fixed file in git: {}", e.getMessage());
+        }
+
+        // 9. Mark issues as resolved in DB — zero out counts and clear issues JSON
+        //    so that the dashboard stats reflect the fix immediately
+        if (cp != null) {
+            List<CodeFile> codeFiles = codeFileRepository.findByProjectId(cp.getId());
+            for (CodeFile cf : codeFiles) {
+                if (filePath.equals(cf.getPath()) || cf.getPath().endsWith(filePath)) {
+                    List<CodeReview> reviews = codeReviewRepository.findByFileId(cf.getId());
+                    for (CodeReview review : reviews) {
+                        review.setBugCount(0);
+                        review.setSecurityCount(0);
+                        review.setPerformanceCount(0);
+                        review.setCodeQualityCount(0);
+                        review.setIssues("[]");
+                        codeReviewRepository.save(review);
+                    }
+                    log.info("Cleared issue counts for fixed file: {}", filePath);
+                    break;
+                }
+            }
+        }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("filePath",     filePath);

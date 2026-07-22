@@ -254,7 +254,21 @@ public class GitController {
         boolean isGitRepo = new File(repoDir, ".git").exists();
         if (isGitRepo) {
             try (Git git = Git.open(repoDir)) {
-                git.checkout().addPath(relativePath).call();
+                // Ensure forward slashes for JGit
+                String gitPath = relativePath.replace('\\', '/');
+                if (gitPath.startsWith("/")) {
+                    gitPath = gitPath.substring(1);
+                }
+                
+                // First unstage the file (reset index to HEAD)
+                try {
+                    git.reset().addPath(gitPath).call();
+                } catch (Exception e) {
+                    // Ignore if reset fails (e.g. no HEAD exists yet)
+                }
+                
+                // Then restore the working tree from the index
+                git.checkout().addPath(gitPath).call();
             }
         }
         return ResponseEntity.ok("Undo successful.");
